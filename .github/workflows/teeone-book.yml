@@ -1,0 +1,131 @@
+name: TeeOne booking (scheduled)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron is UTC and does not support timezones.
+    # We schedule two runs to cover Europe/Madrid DST changes:
+    # - 17:57 UTC == 19:57 in summer (CEST, UTC+2)
+    # - 18:57 UTC == 19:57 in winter (CET, UTC+1)
+    - cron: "57 17 * * *"
+    - cron: "57 18 * * *"
+
+concurrency:
+  group: teeone-booking-scheduled
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Setup Google Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Ensure run is near 19:57 Europe/Madrid
+        shell: bash
+        run: |
+          set -euo pipefail
+          now="$(TZ=Europe/Madrid date +%H%M)"
+          echo "Europe/Madrid time now: $now"
+          # Allow a small window to handle GitHub scheduling jitter.
+          if [[ "$now" < "1955" || "$now" > "1959" ]]; then
+            echo "Not within 19:55-19:59 Europe/Madrid; exiting."
+            exit 0
+          fi
+
+      - name: Write credentials files (.env + Google service account JSON)
+        shell: bash
+        env:
+          # TeeOne
+          TEEONE_USERNAME: ${{ secrets.TEEONE_USERNAME }}
+          TEEONE_PASSWORD: ${{ secrets.TEEONE_PASSWORD }}
+
+          # Google Sheets
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SHEET_RANGE: ${{ secrets.GOOGLE_SHEET_RANGE }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+
+          # Email
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          EMAIL_SMTP_SSL: ${{ secrets.EMAIL_SMTP_SSL }}
+          EMAIL_SMTP_STARTTLS: ${{ secrets.EMAIL_SMTP_STARTTLS }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p credentials logs
+
+          # Write Google service-account JSON from secret.
+          python3 - <<'PY'
+          import os, pathlib
+          p = pathlib.Path("credentials/google-service-account.json")
+          s = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+          if not s.strip():
+              raise SystemExit("Missing secret: GOOGLE_CREDENTIALS_JSON")
+          p.write_text(s, encoding="utf-8")
+          PY
+
+          # Create a runtime .env file (ephemeral on the runner).
+          # We write it via Python to preserve special characters safely and avoid printing secrets.
+          python3 - <<'PY'
+          import os, pathlib
+          def req(k: str) -> str:
+              v = os.environ.get(k, "")
+              if not v.strip():
+                  raise SystemExit(f"Missing secret: {k}")
+              return v
+          def opt(k: str) -> str:
+              return os.environ.get(k, "")
+
+          env_text = "\n".join([
+              f"TEEONE_USERNAME={req('TEEONE_USERNAME')}",
+              f"TEEONE_PASSWORD={req('TEEONE_PASSWORD')}",
+              "",
+              "GOOGLE_CREDENTIALS_PATH=./credentials/google-service-account.json",
+              f"GOOGLE_SHEET_ID={req('GOOGLE_SHEET_ID')}",
+              # Range is optional; if empty, Config falls back to Sheet1!A:Z
+              *( [f"GOOGLE_SHEET_RANGE={opt('GOOGLE_SHEET_RANGE')}"] if opt('GOOGLE_SHEET_RANGE').strip() else [] ),
+              "",
+              f"EMAIL_FROM={req('EMAIL_FROM')}",
+              f"EMAIL_PASSWORD={req('EMAIL_PASSWORD')}",
+              f"EMAIL_TO={req('EMAIL_TO')}",
+              f"EMAIL_SMTP_HOST={req('EMAIL_SMTP_HOST')}",
+              f"EMAIL_SMTP_PORT={req('EMAIL_SMTP_PORT')}",
+              f"EMAIL_SMTP_SSL={req('EMAIL_SMTP_SSL')}",
+              f"EMAIL_SMTP_STARTTLS={req('EMAIL_SMTP_STARTTLS')}",
+              "",
+          ])
+
+          pathlib.Path(".env").write_text(env_text, encoding="utf-8")
+          PY
+
+      - name: Build fat jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -q clean package assembly:single
+
+      - name: Run booking
+        shell: bash
+        env:
+          # If you want extra logs, set these in repo secrets/vars:
+          HEADLESS: "true"
+        run: |
+          set -euo pipefail
+          java -jar target/teeone-booking-jar-with-dependencies.jar
+
