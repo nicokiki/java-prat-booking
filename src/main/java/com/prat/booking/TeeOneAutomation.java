@@ -36,30 +36,24 @@ public class TeeOneAutomation {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration PAGE_LOAD_WAIT = Duration.ofSeconds(3);
 
-    private final WebDriver driver;
-    private final WebDriverWait wait;
+    private WebDriver driver;
+    private WebDriverWait wait;
+    private boolean initialized;
 
     private Boolean reservationSuccess; // null until RESERVAR attempted
     private String reservationAlertClass;
     private String reservationAlertText;
 
     public TeeOneAutomation() {
-        ChromeOptions options = new ChromeOptions();
-        if (Config.headless()) {
-            options.addArguments("--headless=new");
-        }
-        options.addArguments("--no-sandbox");
-        options.addArguments("--disable-dev-shm-usage");
-        options.addArguments("--disable-gpu");
-        options.addArguments("--window-size=1920,1080");
-
-        this.driver = new ChromeDriver(options);
-        this.wait = new WebDriverWait(driver, DEFAULT_TIMEOUT);
+        // Driver is initialized later (time-based) from performBooking()
     }
 
     public void close() {
         if (driver != null) {
             driver.quit();
+            driver = null;
+            wait = null;
+            initialized = false;
         }
     }
 
@@ -73,13 +67,12 @@ public class TeeOneAutomation {
 
         ZoneId madrid = ZoneId.of("Europe/Madrid");
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
-        ZonedDateTime navigateAt = nowMadrid.toLocalDate().atTime(LocalTime.of(19, 59, 55)).atZone(madrid);
+        ZonedDateTime loginCompleteBy = nowMadrid.toLocalDate().atTime(LocalTime.of(19, 59, 50)).atZone(madrid);
+        ZonedDateTime initDriverAt = loginCompleteBy.minusSeconds(30);
         ZonedDateTime fillAt = nowMadrid.toLocalDate().atTime(LocalTime.of(20, 0, 1)).atZone(madrid);
 
-        //ZonedDateTime navigateAt = nowMadrid.toLocalDate().atTime(LocalTime.of(19, 28, 55)).atZone(madrid);
-        //ZonedDateTime fillAt = nowMadrid.toLocalDate().atTime(LocalTime.of(19, 29, 1)).atZone(madrid);
-
-        log.info("Time at which start navigating: {} and filling it at {}", navigateAt, fillAt);
+        log.info("Madrid timing: initDriverAt={}, loginCompleteBy={}, fillAt={}",
+                initDriverAt.toLocalTime(), loginCompleteBy.toLocalTime(), fillAt.toLocalTime());
 
 
         String dateStr = (data.getFecha() != null && !data.getFecha().isBlank())
@@ -87,12 +80,14 @@ public class TeeOneAutomation {
                 : LocalDate.now().plusDays(2).format(DateTimeFormatter.BASIC_ISO_DATE);
         String url = BASE_URL + dateStr;
 
-        waitUntilMadrid(navigateAt, "navigate+login");
+        waitUntilMadrid(initDriverAt, "initDriver");
+        initDriverIfNeeded();
+
         log.info("Navigating to {}", url);
         driver.get(url);
         sleep(PAGE_LOAD_WAIT);
 
-        login();
+        loginUntilRecorridoVisible(loginCompleteBy);
 
         // Start filling exactly at 20:00:01 Madrid time when possible.
         waitUntilMadrid(fillAt, "fillBookingForm");
@@ -100,6 +95,23 @@ public class TeeOneAutomation {
         addSocios(data);
         confirmReservation();
         sleep(Duration.ofMillis(1500));
+    }
+
+    private void initDriverIfNeeded() {
+        if (initialized) return;
+
+        ChromeOptions options = new ChromeOptions();
+        if (Config.headless()) {
+            options.addArguments("--headless=new");
+        }
+        options.addArguments("--no-sandbox");
+        options.addArguments("--disable-dev-shm-usage");
+        options.addArguments("--disable-gpu");
+        options.addArguments("--window-size=1920,1080");
+
+        this.driver = new ChromeDriver(options);
+        this.wait = new WebDriverWait(driver, DEFAULT_TIMEOUT);
+        this.initialized = true;
     }
 
     private void waitUntilMadrid(ZonedDateTime targetMadrid, String stepName) {
@@ -131,7 +143,53 @@ public class TeeOneAutomation {
         WebElement submitBtn = driver.findElement(By.xpath(
                 "//button[@type='submit'] | //input[@type='submit'] | //button[contains(.,'Iniciar')] | //a[contains(@class,'btn')]"));
         submitBtn.click();
-        sleep(PAGE_LOAD_WAIT);
+    }
+
+    private void loginUntilRecorridoVisible(ZonedDateTime loginCompleteByMadrid) {
+        ZonedDateTime now = ZonedDateTime.now(loginCompleteByMadrid.getZone());
+        if (now.isAfter(loginCompleteByMadrid)) {
+            log.warn("Already past login deadline {} (now={}); continuing anyway",
+                    loginCompleteByMadrid.toLocalTime(), now.toLocalTime());
+            // Best-effort: still try to wait briefly for Recorrido if it’s already loading.
+            try {
+                new WebDriverWait(driver, Duration.ofSeconds(1)).until(d -> {
+                    WebElement recorrido = findSelectByLabelOrName("Recorrido");
+                    return recorrido != null && recorrido.isDisplayed();
+                });
+                log.info("Recorrido dropdown is visible (late, but login appears complete)");
+            } catch (Exception ignored) {
+                log.warn("Recorrido dropdown not visible yet (late); continuing anyway");
+            }
+            return;
+        }
+
+        // Trigger login (if we are on login page).
+        try {
+            login();
+        } catch (Exception e) {
+            log.info("Login form not found or already logged in; proceeding to wait for Recorrido");
+        }
+
+        Duration remaining = Duration.between(ZonedDateTime.now(loginCompleteByMadrid.getZone()), loginCompleteByMadrid);
+        if (remaining.isNegative() || remaining.isZero()) {
+            log.warn("No time remaining to complete login before deadline {}; continuing anyway",
+                    loginCompleteByMadrid.toLocalTime());
+            return;
+        }
+
+        log.info("Waiting up to {}ms for login to complete (Recorrido visible) before {}",
+                remaining.toMillis(), loginCompleteByMadrid.toLocalTime());
+
+        try {
+            new WebDriverWait(driver, remaining).until(d -> {
+                WebElement recorrido = findSelectByLabelOrName("Recorrido");
+                return recorrido != null && recorrido.isDisplayed();
+            });
+            log.info("Login complete: Recorrido dropdown is visible");
+        } catch (TimeoutException e) {
+            log.warn("Login did not complete before deadline {} (Recorrido not visible); continuing anyway",
+                    loginCompleteByMadrid.toLocalTime());
+        }
     }
 
     private void fillBookingForm(BookingData data) {
