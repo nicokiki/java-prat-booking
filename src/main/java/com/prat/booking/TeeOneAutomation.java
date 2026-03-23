@@ -148,19 +148,8 @@ public class TeeOneAutomation {
     private void loginUntilRecorridoVisible(ZonedDateTime loginCompleteByMadrid) {
         ZonedDateTime now = ZonedDateTime.now(loginCompleteByMadrid.getZone());
         if (now.isAfter(loginCompleteByMadrid)) {
-            log.warn("Already past login deadline {} (now={}); continuing anyway",
+            log.warn("Already past login deadline {} (now={}); will attempt login anyway",
                     loginCompleteByMadrid.toLocalTime(), now.toLocalTime());
-            // Best-effort: still try to wait briefly for Recorrido if it’s already loading.
-            try {
-                new WebDriverWait(driver, Duration.ofSeconds(1)).until(d -> {
-                    WebElement recorrido = findSelectByLabelOrName("Recorrido");
-                    return recorrido != null && recorrido.isDisplayed();
-                });
-                log.info("Recorrido dropdown is visible (late, but login appears complete)");
-            } catch (Exception ignored) {
-                log.warn("Recorrido dropdown not visible yet (late); continuing anyway");
-            }
-            return;
         }
 
         // Trigger login (if we are on login page).
@@ -171,24 +160,30 @@ public class TeeOneAutomation {
         }
 
         Duration remaining = Duration.between(ZonedDateTime.now(loginCompleteByMadrid.getZone()), loginCompleteByMadrid);
+        Duration waitForRecorrido = (remaining.isNegative() || remaining.isZero()) ? DEFAULT_TIMEOUT : remaining;
+
         if (remaining.isNegative() || remaining.isZero()) {
-            log.warn("No time remaining to complete login before deadline {}; continuing anyway",
-                    loginCompleteByMadrid.toLocalTime());
-            return;
+            log.info("Deadline already passed; waiting up to {}ms for Recorrido visibility",
+                    waitForRecorrido.toMillis());
+        } else {
+            log.info("Waiting up to {}ms for login to complete (Recorrido visible) before {}",
+                    waitForRecorrido.toMillis(), loginCompleteByMadrid.toLocalTime());
         }
 
-        log.info("Waiting up to {}ms for login to complete (Recorrido visible) before {}",
-                remaining.toMillis(), loginCompleteByMadrid.toLocalTime());
-
         try {
-            new WebDriverWait(driver, remaining).until(d -> {
+            new WebDriverWait(driver, waitForRecorrido).until(d -> {
                 WebElement recorrido = findSelectByLabelOrName("Recorrido");
                 return recorrido != null && recorrido.isDisplayed();
             });
             log.info("Login complete: Recorrido dropdown is visible");
         } catch (TimeoutException e) {
-            log.warn("Login did not complete before deadline {} (Recorrido not visible); continuing anyway",
-                    loginCompleteByMadrid.toLocalTime());
+            if (remaining.isNegative() || remaining.isZero()) {
+                log.warn("Recorrido dropdown still not visible after {}ms; continuing anyway",
+                        waitForRecorrido.toMillis());
+            } else {
+                log.warn("Login did not complete before deadline {} (Recorrido not visible); continuing anyway",
+                        loginCompleteByMadrid.toLocalTime());
+            }
         }
     }
 
