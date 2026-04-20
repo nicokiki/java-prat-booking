@@ -5,10 +5,13 @@ on:
   schedule:
     # GitHub cron is UTC and does not support timezones.
     # We schedule two runs to cover Europe/Madrid DST changes:
-    # - 17:57 UTC == 19:57 in summer (CEST, UTC+2)
-    # - 18:57 UTC == 19:57 in winter (CET, UTC+1)
-    - cron: "57 17 * * *"
-    - cron: "57 18 * * *"
+    # - 17:50 UTC == 19:50 in summer (CEST, UTC+2)
+    # - 18:50 UTC == 19:50 in winter (CET, UTC+1)
+    #
+    # We trigger earlier than 20:00 so the runner has time to checkout/build;
+    # the Java app itself waits until ~20:00 Europe/Madrid to fill the form.
+    - cron: "50 17 * * *"
+    - cron: "50 18 * * *"
 
 concurrency:
   group: teeone-booking-scheduled
@@ -33,15 +36,16 @@ jobs:
       - name: Setup Google Chrome
         uses: browser-actions/setup-chrome@v1
 
-      - name: Ensure run is near 19:57 Europe/Madrid
+      - name: Ensure run is near 20:00 Europe/Madrid
         shell: bash
         run: |
           set -euo pipefail
           now="$(TZ=Europe/Madrid date +%H%M)"
           echo "Europe/Madrid time now: $now"
-          # Allow a small window to handle GitHub scheduling jitter.
-          if [[ "$now" < "1955" || "$now" > "1959" ]]; then
-            echo "Not within 19:55-19:59 Europe/Madrid; exiting."
+          # Allow a generous window to handle GitHub scheduling jitter/queueing.
+          # This also ensures only one of the two UTC schedules proceeds.
+          if [[ "$now" < "1930" || "$now" > "2010" ]]; then
+            echo "Not within 19:30-20:10 Europe/Madrid; exiting."
             exit 0
           fi
 
