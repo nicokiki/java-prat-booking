@@ -3,15 +3,12 @@ name: TeeOne booking (scheduled)
 on:
   workflow_dispatch:
   schedule:
-    # GitHub cron is UTC and does not support timezones.
-    # We schedule two runs to cover Europe/Madrid DST changes:
-    # - 17:50 UTC == 19:50 in summer (CEST, UTC+2)
-    # - 18:50 UTC == 19:50 in winter (CET, UTC+1)
+    # Run once per day in Europe/Madrid local time.
     #
     # We trigger earlier than 20:00 so the runner has time to checkout/build;
     # the Java app itself waits until ~20:00 Europe/Madrid to fill the form.
-    - cron: "50 17 * * *"
-    - cron: "50 18 * * *"
+    - cron: "50 19 * * *"
+      timezone: "Europe/Madrid"
 
 concurrency:
   group: teeone-booking-scheduled
@@ -35,19 +32,6 @@ jobs:
 
       - name: Setup Google Chrome
         uses: browser-actions/setup-chrome@v1
-
-      - name: Ensure run is near 20:00 Europe/Madrid
-        shell: bash
-        run: |
-          set -euo pipefail
-          now="$(TZ=Europe/Madrid date +%H%M)"
-          echo "Europe/Madrid time now: $now"
-          # Allow a generous window to handle GitHub scheduling jitter/queueing.
-          # This also ensures only one of the two UTC schedules proceeds.
-          if [[ "$now" < "1930" || "$now" > "2010" ]]; then
-            echo "Not within 19:30-20:10 Europe/Madrid; exiting."
-            exit 0
-          fi
 
       - name: Write credentials files (.env + Google service account JSON)
         shell: bash
