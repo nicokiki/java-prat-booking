@@ -15,6 +15,7 @@ import org.openqa.selenium.support.ui.WebDriverWait;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.text.Normalizer;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -23,6 +24,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -244,24 +246,27 @@ public class TeeOneAutomation {
             throw new IllegalStateException("Empty value for dropdown: " + labelOrName);
         }
         String rawWant = stripInvisibleChars(value.trim());
-        String wantNorm = normalize(rawWant);
+        String wantCanon = canonicalOptionLabel(rawWant);
+        String wantCompact = compactOptionKey(rawWant);
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
-        log.info("Dropdown '{}' options (attempting to select '{}'):", labelOrName, rawWant);
+        log.info("Dropdown '{}' options (attempting to select '{}', canonical='{}'):", labelOrName, rawWant, wantCanon);
         for (WebElement opt : options) {
-            log.info("  - text: '{}' | value: '{}'", opt.getText(), opt.getAttribute("value"));
+            log.info("  - text: '{}' | value: '{}'", optionVisibleText(opt), opt.getAttribute("value"));
         }
 
         int matchIndex = -1;
         for (int i = 0; i < options.size(); i++) {
             WebElement opt = options.get(i);
-            String optRaw = opt.getText() == null ? "" : opt.getText();
-            String textNorm = normalize(stripInvisibleChars(optRaw));
+            String optRaw = optionVisibleText(opt);
+            String textCanon = canonicalOptionLabel(optRaw);
+            String textCompact = compactOptionKey(optRaw);
             String val = opt.getAttribute("value");
-            boolean byVisible = !wantNorm.isEmpty() && wantNorm.equalsIgnoreCase(textNorm);
             boolean byValue = val != null && rawWant.equals(val.trim());
-            if (byVisible || byValue) {
+            boolean byCanon = !wantCanon.isEmpty() && wantCanon.equals(textCanon);
+            boolean byCompact = wantCompact.length() >= 4 && wantCompact.equals(textCompact);
+            if (byValue || byCanon || byCompact) {
                 matchIndex = i;
                 break;
             }
@@ -270,7 +275,7 @@ public class TeeOneAutomation {
             String selectId = selectEl.getAttribute("id");
             throw new NoSuchElementException(String.format(
                     "Cannot find option matching '%s' in dropdown '%s' (select id=%s). "
-                            + "Option texts after normalize did not equal wanted text (case-insensitive) and no value match.",
+                            + "Compared canonical NFKC labels and compact (no-space) keys; no value match either.",
                     rawWant, labelOrName, selectId == null ? "(none)" : selectId));
         }
         select.selectByIndex(matchIndex);
@@ -394,6 +399,81 @@ public class TeeOneAutomation {
         return s.replaceAll("[\uFEFF\u200B-\u200D\u2060]", "");
     }
 
+    /**
+     * Visible text for an {@code <option>}: {@link WebElement#getText()} is usually right; fall back to
+     * attributes or JS when Kendo / headless Chrome returns blank.
+     */
+    private String optionVisibleText(WebElement option) {
+        if (option == null) {
+            return "";
+        }
+        try {
+            String t = option.getText();
+            if (t != null && !t.isBlank()) {
+                return t;
+            }
+        } catch (Exception ignored) {
+            // fall through
+        }
+        String inner = option.getAttribute("innerText");
+        if (inner != null && !inner.isBlank()) {
+            return inner;
+        }
+        String tc = option.getAttribute("textContent");
+        if (tc != null && !tc.isBlank()) {
+            return tc;
+        }
+        if (driver instanceof JavascriptExecutor) {
+            try {
+                Object o = ((JavascriptExecutor) driver).executeScript(
+                        "var o=arguments[0]; return (o.text||'').trim() || (o.label||'').trim() || (o.innerText||'').trim() || '';",
+                        option);
+                if (o != null) {
+                    String s = String.valueOf(o).trim();
+                    if (!s.isEmpty()) {
+                        return s;
+                    }
+                }
+            } catch (Exception ignored) {
+                // fall through
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Unicode NFKC + whitespace collapse + lower case — aligns sheet text with DOM for Latin confusables,
+     * fullwidth digits, compatibility characters, etc.
+     */
+    private static String canonicalOptionLabel(String s) {
+        if (s == null) {
+            return "";
+        }
+        String x = stripInvisibleChars(s.trim());
+        x = Normalizer.normalize(x, Normalizer.Form.NFKC);
+        x = x.replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+        return x;
+    }
+
+    /** Ignores all whitespace so "TEE 1" and "TEE1" still match. */
+    private static String compactOptionKey(String s) {
+        return canonicalOptionLabel(s).replace(" ", "");
+    }
+
+    /** Stable {@code id} on TeeOne inscripción form when label text ≠ element id. */
+    private static List<String> teeOneSelectIdAlternates(String labelTrimmed) {
+        if ("Número de hoyos".equalsIgnoreCase(labelTrimmed)) {
+            return List.of("Hoyos");
+        }
+        if ("Jugadores".equalsIgnoreCase(labelTrimmed)) {
+            return List.of("Plazas");
+        }
+        if ("Hora de juego".equalsIgnoreCase(labelTrimmed)) {
+            return List.of("HoraJuego");
+        }
+        return List.of();
+    }
+
     private static class ParsedHorario {
         final int minutes;
 
@@ -428,6 +508,16 @@ public class TeeOneAutomation {
                 }
             } catch (NoSuchElementException ignored) {
                 // continue
+            }
+            for (String altId : teeOneSelectIdAlternates(key)) {
+                try {
+                    WebElement byId = driver.findElement(By.id(altId));
+                    if ("select".equalsIgnoreCase(byId.getTagName())) {
+                        return byId;
+                    }
+                } catch (NoSuchElementException ignored) {
+                    // continue
+                }
             }
 
             // Try by label text (label for= or adjacent)
