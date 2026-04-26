@@ -203,7 +203,7 @@ public class TeeOneAutomation {
         log.info("Filling booking form: Recorrido={}, Horario={}, Socios={}", data.getRecorrido(), data.getHorario(), data.getSocios());
 
         selectDropdown("Recorrido", data.getRecorrido());
-        sleep(Duration.ofMillis(100));
+        sleep(Duration.ofMillis(Config.waitAfterRecorridoMs()));
         selectDropdown("Número de hoyos", "18");
         sleep(Duration.ofMillis(100));
         selectDropdown("Jugadores", String.valueOf(data.getSocios()));
@@ -249,6 +249,10 @@ public class TeeOneAutomation {
         String wantCanon = canonicalOptionLabel(rawWant);
         String wantCompact = compactOptionKey(rawWant);
 
+        if ("Recorrido".equalsIgnoreCase(labelOrName.trim())) {
+            selectEl = waitUntilRecorridoListsMatchingOption(rawWant, wantCanon, wantCompact);
+        }
+
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
         log.info("Dropdown '{}' options (attempting to select '{}', canonical='{}'):", labelOrName, rawWant, wantCanon);
@@ -259,14 +263,7 @@ public class TeeOneAutomation {
         int matchIndex = -1;
         for (int i = 0; i < options.size(); i++) {
             WebElement opt = options.get(i);
-            String optRaw = optionVisibleText(opt);
-            String textCanon = canonicalOptionLabel(optRaw);
-            String textCompact = compactOptionKey(optRaw);
-            String val = opt.getAttribute("value");
-            boolean byValue = val != null && rawWant.equals(val.trim());
-            boolean byCanon = !wantCanon.isEmpty() && wantCanon.equals(textCanon);
-            boolean byCompact = wantCompact.length() >= 4 && wantCompact.equals(textCompact);
-            if (byValue || byCanon || byCompact) {
+            if (optionMatchesChoice(opt, rawWant, wantCanon, wantCompact)) {
                 matchIndex = i;
                 break;
             }
@@ -280,8 +277,66 @@ public class TeeOneAutomation {
         }
         select.selectByIndex(matchIndex);
         sleep(Duration.ofMillis(300));
+        if ("Recorrido".equalsIgnoreCase(labelOrName.trim())) {
+            waitUntilJQueryAjaxIdle(Duration.ofSeconds(15));
+            selectEl = driver.findElement(By.id("Recorrido"));
+            select = new Select(selectEl);
+        }
         WebElement selected = select.getFirstSelectedOption();
         log.info("Dropdown '{}' selected: text='{}' value='{}'", labelOrName, selected.getText(), selected.getAttribute("value"));
+    }
+
+    /**
+     * TeeOne repopulates filters after the page loads; the native {@code #Recorrido} options can appear
+     * only after script runs. Poll until our target option exists so we do not read an empty/stale list.
+     */
+    private WebElement waitUntilRecorridoListsMatchingOption(String rawWant, String wantCanon, String wantCompact) {
+        log.info("Waiting for Recorrido options to include a match for '{}'...", rawWant);
+        try {
+            return new WebDriverWait(driver, Duration.ofSeconds(25))
+                    .pollingEvery(Duration.ofMillis(200))
+                    .until(d -> {
+                        WebElement sel;
+                        try {
+                            sel = d.findElement(By.id("Recorrido"));
+                        } catch (NoSuchElementException e) {
+                            return null;
+                        }
+                        Select s = new Select(sel);
+                        for (WebElement opt : s.getOptions()) {
+                            if (optionMatchesChoice(opt, rawWant, wantCanon, wantCompact)) {
+                                return sel;
+                            }
+                        }
+                        return null;
+                    });
+        } catch (TimeoutException e) {
+            throw new IllegalStateException(
+                    "Timed out waiting for Recorrido <select> to list an option matching: " + rawWant, e);
+        }
+    }
+
+    /** Best-effort wait for in-flight TeeOne / jQuery AJAX after changing filters. */
+    private void waitUntilJQueryAjaxIdle(Duration maxWait) {
+        try {
+            new WebDriverWait(driver, maxWait).pollingEvery(Duration.ofMillis(200))
+                    .until(d -> Boolean.TRUE.equals(((JavascriptExecutor) d).executeScript(
+                            "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }")));
+            log.info("jQuery AJAX idle after Recorrido change");
+        } catch (TimeoutException e) {
+            log.warn("jQuery.active did not return to 0 within {} — continuing", maxWait);
+        }
+    }
+
+    private boolean optionMatchesChoice(WebElement opt, String rawWant, String wantCanon, String wantCompact) {
+        String optRaw = optionVisibleText(opt);
+        String textCanon = canonicalOptionLabel(optRaw);
+        String textCompact = compactOptionKey(optRaw);
+        String val = opt.getAttribute("value");
+        boolean byValue = val != null && rawWant.equals(val.trim());
+        boolean byCanon = !wantCanon.isEmpty() && wantCanon.equals(textCanon);
+        boolean byCompact = wantCompact.length() >= 4 && wantCompact.equals(textCompact);
+        return byValue || byCanon || byCompact;
     }
 
     private void selectHoraDeJuego(String sheetHorario, int socios) {

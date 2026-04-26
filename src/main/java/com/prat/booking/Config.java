@@ -81,6 +81,21 @@ public class Config {
     }
 
     /**
+     * Wait in ms after selecting Recorrido (after AJAX idle), before other filters. Default 1200.
+     * Lets dependent combos refresh; override with {@code WAIT_AFTER_RECORRIDO_MS} in env or .env.
+     */
+    public static int waitAfterRecorridoMs() {
+        String v = System.getenv("WAIT_AFTER_RECORRIDO_MS");
+        if (v == null || v.isBlank()) {
+            v = DOTENV.get("WAIT_AFTER_RECORRIDO_MS");
+        }
+        if (v == null || v.isBlank()) {
+            return 1200;
+        }
+        return Integer.parseInt(v.trim());
+    }
+
+    /**
      * When true, the booking automation does not sleep until 19:59:20 / 20:00:02 Europe/Madrid.
      * Set {@code SKIP_MADRID_TIME_WAIT=true} in the environment (e.g. GitHub Actions manual workflow input)
      * or in {@code .env} for local dry runs.
