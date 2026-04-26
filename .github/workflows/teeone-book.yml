@@ -7,6 +7,14 @@ on:
         description: "Run immediately without waiting for 19:59 / 20:00 Europe/Madrid (for testing)"
         type: boolean
         default: true
+      target_date_offset_days:
+        description: "Days from today for sheet row + URL when Fecha is empty (scheduled runs always use 2)"
+        type: choice
+        options:
+          - "2"
+          - "1"
+          - "0"
+        default: "2"
   schedule:
     # Europe/Madrid: cron is when GitHub *queues* the workflow, not when a
     # runner starts. On ubuntu-latest, starts are often ~30–60 minutes later
@@ -123,6 +131,8 @@ jobs:
           HEADLESS: "true"
           # Manual runs: honor workflow checkbox. Scheduled runs: always wait for Madrid window.
           SKIP_MADRID_TIME_WAIT: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_madrid_time_wait && 'true' || 'false' }}
+          # Manual: choice 0/1/2. Scheduled: always 2 (same as previous hard-coded behavior).
+          BOOKING_TARGET_DATE_OFFSET_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date_offset_days || '2' }}
         run: |
           set -euo pipefail
           java -jar target/teeone-booking-jar-with-dependencies.jar

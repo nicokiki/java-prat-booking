@@ -93,6 +93,31 @@ public class Config {
         return v != null && "true".equalsIgnoreCase(v.trim());
     }
 
+    /**
+     * Days added to {@code LocalDate.now()} for the booking target when the sheet does not supply a date,
+     * and for the Google Sheet row lookup in {@code Main}. Must be 0, 1, or 2. Default {@code 2}.
+     * Set {@code BOOKING_TARGET_DATE_OFFSET_DAYS} in the environment (e.g. GitHub manual workflow input) or in {@code .env}.
+     */
+    public static int bookingTargetDateOffsetDays() {
+        String v = System.getenv("BOOKING_TARGET_DATE_OFFSET_DAYS");
+        if (v == null || v.isBlank()) {
+            v = DOTENV.get("BOOKING_TARGET_DATE_OFFSET_DAYS");
+        }
+        if (v == null || v.isBlank()) {
+            return 2;
+        }
+        v = v.trim();
+        try {
+            int n = Integer.parseInt(v);
+            if (n >= 0 && n <= 2) {
+                return n;
+            }
+        } catch (NumberFormatException ignored) {
+            // fall through
+        }
+        throw new IllegalStateException("BOOKING_TARGET_DATE_OFFSET_DAYS must be 0, 1, or 2, got: " + v);
+    }
+
     private static String require(String key) {
         String value = DOTENV.get(key);
         if (value == null || value.isBlank()) {
