@@ -2,12 +2,20 @@ name: TeeOne booking (scheduled)
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_madrid_time_wait:
+        description: "Run immediately without waiting for 19:59 / 20:00 Europe/Madrid (for testing)"
+        type: boolean
+        default: true
   schedule:
-    # Run once per day in Europe/Madrid local time.
+    # Europe/Madrid: cron is when GitHub *queues* the workflow, not when a
+    # runner starts. On ubuntu-latest, starts are often ~30–60 minutes later
+    # (capacity), so a 19:50 cron can begin ~20:20–20:30 local — that is delay,
+    # not a broken timezone (19:50 Madrid ≈ 17:50 UTC; observed ~18:29 UTC).
     #
-    # We trigger earlier than 20:00 so the runner has time to checkout/build;
-    # the Java app itself waits until ~20:00 Europe/Madrid to fill the form.
-    - cron: "50 19 * * *"
+    # Schedule earlier so queue + checkout/build still land before ~20:00 when
+    # the Java app submits. Tune if your runs still start too early/late.
+    - cron: "0 19 * * *"
       timezone: "Europe/Madrid"
 
 concurrency:
@@ -113,6 +121,8 @@ jobs:
         env:
           # If you want extra logs, set these in repo secrets/vars:
           HEADLESS: "true"
+          # Manual runs: honor workflow checkbox. Scheduled runs: always wait for Madrid window.
+          SKIP_MADRID_TIME_WAIT: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_madrid_time_wait && 'true' || 'false' }}
         run: |
           set -euo pipefail
           java -jar target/teeone-booking-jar-with-dependencies.jar

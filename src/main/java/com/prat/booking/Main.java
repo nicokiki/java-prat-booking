@@ -32,6 +32,7 @@ public class Main {
             if (Boolean.TRUE.equals(success)) {
                 String details = String.format("Fecha: %s\nRecorrido: %s\nHorario: %s\nSocios: %d",
                         data.getFecha(), data.getRecorrido(), data.getHorario(), data.getSocios());
+                details = withHoraDeJuegoDropdownOptions(details, automation);
                 new EmailNotifier().sendSuccess(details);
                 log.info("Booking completed successfully");
             } else {
@@ -39,12 +40,15 @@ public class Main {
                 String error = (alert == null || alert.isBlank())
                         ? "Reservation failed (no success message). Check page source."
                         : "Reservation failed. Site message: " + alert;
+                error = withHoraDeJuegoDropdownOptions(error, automation);
                 new EmailNotifier().sendFailure(error);
                 log.error(error);
             }
         } catch (Exception e) {
             log.error("Booking failed", e);
-            new EmailNotifier().sendFailure(e.getMessage());
+            String failureMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            failureMsg = withHoraDeJuegoDropdownOptions(failureMsg, automation);
+            new EmailNotifier().sendFailure(failureMsg);
         } finally {
             if (automation != null) {
                 automation.close();
@@ -55,5 +59,16 @@ public class Main {
     private static LocalDate targetDate() {
         return LocalDate.now().plusDays(2);
         //return LocalDate.now().plusDays(1);
+    }
+
+    private static String withHoraDeJuegoDropdownOptions(String body, TeeOneAutomation automation) {
+        if (automation == null) {
+            return body;
+        }
+        String opts = automation.getHoraDeJuegoDropdownOptions();
+        if (opts == null || opts.isBlank()) {
+            return body;
+        }
+        return body + "\n\nHora de juego (opciones en desplegable):\n" + opts;
     }
 }

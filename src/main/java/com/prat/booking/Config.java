@@ -80,6 +80,19 @@ public class Config {
         return Integer.parseInt(get("DEBUG_WAIT_AFTER_JUGADORES_MS", "1000"));
     }
 
+    /**
+     * When true, the booking automation does not sleep until 19:59:20 / 20:00:02 Europe/Madrid.
+     * Set {@code SKIP_MADRID_TIME_WAIT=true} in the environment (e.g. GitHub Actions manual workflow input)
+     * or in {@code .env} for local dry runs.
+     */
+    public static boolean skipMadridTimeWait() {
+        String v = System.getenv("SKIP_MADRID_TIME_WAIT");
+        if (v == null || v.isBlank()) {
+            v = DOTENV.get("SKIP_MADRID_TIME_WAIT");
+        }
+        return v != null && "true".equalsIgnoreCase(v.trim());
+    }
+
     private static String require(String key) {
         String value = DOTENV.get(key);
         if (value == null || value.isBlank()) {
