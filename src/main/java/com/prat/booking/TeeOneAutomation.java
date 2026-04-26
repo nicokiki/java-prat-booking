@@ -240,17 +240,37 @@ public class TeeOneAutomation {
                 throw new IllegalStateException("Could not find dropdown for: " + labelOrName, e);
             }
         }
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("Empty value for dropdown: " + labelOrName);
+        }
+        String rawWant = value.trim();
+        String wantNorm = normalize(rawWant);
+
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
-        log.info("Dropdown '{}' options (attempting to select '{}'):", labelOrName, value);
+        log.info("Dropdown '{}' options (attempting to select '{}'):", labelOrName, rawWant);
         for (WebElement opt : options) {
             log.info("  - text: '{}' | value: '{}'", opt.getText(), opt.getAttribute("value"));
         }
-        try {
-            select.selectByVisibleText(value);
-        } catch (Exception e) {
-            select.selectByValue(value);
+
+        int matchIndex = -1;
+        for (int i = 0; i < options.size(); i++) {
+            WebElement opt = options.get(i);
+            String textNorm = normalize(opt.getText());
+            String val = opt.getAttribute("value");
+            boolean byVisible = !wantNorm.isEmpty() && wantNorm.equalsIgnoreCase(textNorm);
+            boolean byValue = val != null && rawWant.equals(val.trim());
+            if (byVisible || byValue) {
+                matchIndex = i;
+                break;
+            }
         }
+        if (matchIndex < 0) {
+            throw new NoSuchElementException(String.format(
+                    "Cannot find option matching '%s' in dropdown '%s' (visible text after space-normalize, or exact value attribute)",
+                    rawWant, labelOrName));
+        }
+        select.selectByIndex(matchIndex);
         sleep(Duration.ofMillis(300));
         WebElement selected = select.getFirstSelectedOption();
         log.info("Dropdown '{}' selected: text='{}' value='{}'", labelOrName, selected.getText(), selected.getAttribute("value"));
