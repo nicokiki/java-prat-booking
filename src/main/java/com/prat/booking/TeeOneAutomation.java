@@ -243,7 +243,7 @@ public class TeeOneAutomation {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Empty value for dropdown: " + labelOrName);
         }
-        String rawWant = value.trim();
+        String rawWant = stripInvisibleChars(value.trim());
         String wantNorm = normalize(rawWant);
 
         Select select = new Select(selectEl);
@@ -256,7 +256,8 @@ public class TeeOneAutomation {
         int matchIndex = -1;
         for (int i = 0; i < options.size(); i++) {
             WebElement opt = options.get(i);
-            String textNorm = normalize(opt.getText());
+            String optRaw = opt.getText() == null ? "" : opt.getText();
+            String textNorm = normalize(stripInvisibleChars(optRaw));
             String val = opt.getAttribute("value");
             boolean byVisible = !wantNorm.isEmpty() && wantNorm.equalsIgnoreCase(textNorm);
             boolean byValue = val != null && rawWant.equals(val.trim());
@@ -266,9 +267,11 @@ public class TeeOneAutomation {
             }
         }
         if (matchIndex < 0) {
+            String selectId = selectEl.getAttribute("id");
             throw new NoSuchElementException(String.format(
-                    "Cannot find option matching '%s' in dropdown '%s' (visible text after space-normalize, or exact value attribute)",
-                    rawWant, labelOrName));
+                    "Cannot find option matching '%s' in dropdown '%s' (select id=%s). "
+                            + "Option texts after normalize did not equal wanted text (case-insensitive) and no value match.",
+                    rawWant, labelOrName, selectId == null ? "(none)" : selectId));
         }
         select.selectByIndex(matchIndex);
         sleep(Duration.ofMillis(300));
@@ -383,6 +386,14 @@ public class TeeOneAutomation {
         return s == null ? "" : s.replaceAll("\\s+", " ").trim();
     }
 
+    /** BOM / ZWSP etc. often appear in Google Sheets paste; they break exact option matching. */
+    private static String stripInvisibleChars(String s) {
+        if (s == null || s.isEmpty()) {
+            return "";
+        }
+        return s.replaceAll("[\uFEFF\u200B-\u200D\u2060]", "");
+    }
+
     private static class ParsedHorario {
         final int minutes;
 
@@ -404,7 +415,21 @@ public class TeeOneAutomation {
     }
 
     private WebElement findSelectByLabelOrName(String label) {
+        if (label == null || label.isBlank()) {
+            return null;
+        }
+        String key = label.trim();
         try {
+            // TeeOne uses <select id="Recorrido"> etc. — prefer stable id before fuzzy label XPath.
+            try {
+                WebElement byId = driver.findElement(By.id(key));
+                if ("select".equalsIgnoreCase(byId.getTagName())) {
+                    return byId;
+                }
+            } catch (NoSuchElementException ignored) {
+                // continue
+            }
+
             // Try by label text (label for= or adjacent)
             List<WebElement> labels = driver.findElements(By.xpath(
                     "//label[contains(.,'" + label + "')] | //*[contains(text(),'" + label + "')]"));
@@ -426,7 +451,7 @@ public class TeeOneAutomation {
                 String name = sel.getAttribute("name");
                 if (name != null && name.toLowerCase().contains(nameHint)) return sel;
             }
-            return selects.isEmpty() ? null : selects.get(0);
+            return null;
         } catch (Exception e) {
             return null;
         }
