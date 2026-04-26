@@ -43,6 +43,8 @@ public class TeeOneAutomation {
     private Boolean reservationSuccess; // null until RESERVAR attempted
     private String reservationAlertClass;
     private String reservationAlertText;
+    /** Visible labels from the Hora de juego dropdown after it is read; used in notification emails. */
+    private String horaDeJuegoDropdownOptions;
 
     public TeeOneAutomation() {
         // Driver is initialized later (time-based) from performBooking()
@@ -64,12 +66,20 @@ public class TeeOneAutomation {
         reservationSuccess = null;
         reservationAlertClass = null;
         reservationAlertText = null;
+        horaDeJuegoDropdownOptions = null;
 
         ZoneId madrid = ZoneId.of("Europe/Madrid");
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
         ZonedDateTime loginCompleteBy = nowMadrid.toLocalDate().atTime(LocalTime.of(19, 59, 50)).atZone(madrid);
         ZonedDateTime initDriverAt = loginCompleteBy.minusSeconds(30);
         ZonedDateTime fillAt = nowMadrid.toLocalDate().atTime(LocalTime.of(20, 0, 2)).atZone(madrid);
+        if (Config.skipMadridTimeWait()) {
+            ZonedDateTime past = nowMadrid.minusSeconds(1);
+            initDriverAt = past;
+            loginCompleteBy = past;
+            fillAt = past;
+            log.warn("SKIP_MADRID_TIME_WAIT: skipping Madrid clock waits (init/login/fill)");
+        }
 
         log.info("Madrid timing: initDriverAt={}, loginCompleteBy={}, fillAt={}",
                 initDriverAt.toLocalTime(), loginCompleteBy.toLocalTime(), fillAt.toLocalTime());
@@ -261,6 +271,7 @@ public class TeeOneAutomation {
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
+        horaDeJuegoDropdownOptions = formatHoraDeJuegoOptionsForEmail(options);
         log.info("Hora de juego options (sheet='{}', socios={}):", raw, socios);
         for (WebElement opt : options) {
             log.info("  - text: '{}' | value: '{}'", opt.getText(), opt.getAttribute("value"));
@@ -557,6 +568,33 @@ public class TeeOneAutomation {
 
     public String getReservationAlertClass() {
         return reservationAlertClass;
+    }
+
+    /**
+     * Visible texts from the "Hora de juego" dropdown (one line per option) once that step has run;
+     * {@code null} if booking failed before the dropdown was read.
+     */
+    public String getHoraDeJuegoDropdownOptions() {
+        return horaDeJuegoDropdownOptions;
+    }
+
+    private static String formatHoraDeJuegoOptionsForEmail(List<WebElement> options) {
+        StringBuilder sb = new StringBuilder();
+        for (WebElement opt : options) {
+            String t = opt.getText();
+            if (t == null) {
+                continue;
+            }
+            t = t.replaceAll("\\s+", " ").trim();
+            if (t.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(t);
+        }
+        return sb.length() > 0 ? sb.toString() : null;
     }
 
     private boolean computeSuccessFromDom() {
