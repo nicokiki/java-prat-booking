@@ -7,7 +7,8 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
 /**
- * Main entry point. Runs at 8 PM via cron - performs tee time booking for date + 2 days.
+ * Main entry point. Runs at 8 PM via cron - performs tee time booking for {@code today + offset} days
+ * (offset defaults to 2; override with {@code BOOKING_TARGET_DATE_OFFSET_DAYS}).
  */
 public class Main {
 
@@ -17,7 +18,8 @@ public class Main {
         LocalDate targetDate = targetDate();
         String dateStr = targetDate.format(DateTimeFormatter.ISO_LOCAL_DATE);
 
-        log.info("Starting booking for date: {}", dateStr);
+        int offsetDays = Config.bookingTargetDateOffsetDays();
+        log.info("Starting booking for date: {} (offset from today: {} days)", dateStr, offsetDays);
 
         TeeOneAutomation automation = null;
         try {
@@ -57,8 +59,7 @@ public class Main {
     }
 
     private static LocalDate targetDate() {
-        return LocalDate.now().plusDays(2);
-        //return LocalDate.now().plusDays(1);
+        return LocalDate.now().plusDays(Config.bookingTargetDateOffsetDays());
     }
 
     private static String withHoraDeJuegoDropdownOptions(String body, TeeOneAutomation automation) {

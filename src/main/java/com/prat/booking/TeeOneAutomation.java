@@ -87,7 +87,7 @@ public class TeeOneAutomation {
 
         String dateStr = (data.getFecha() != null && !data.getFecha().isBlank())
                 ? data.getFecha().trim()
-                : LocalDate.now().plusDays(2).format(DateTimeFormatter.BASIC_ISO_DATE);
+                : LocalDate.now().plusDays(Config.bookingTargetDateOffsetDays()).format(DateTimeFormatter.BASIC_ISO_DATE);
         String url = BASE_URL + dateStr;
 
         waitUntilMadrid(initDriverAt, "initDriver");
