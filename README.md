@@ -64,7 +64,7 @@ Workflow: [`.github/workflows/teeone-book.yml`](.github/workflows/teeone-book.ym
 
 | Trigger | When |
 |--------|------|
-| **Schedule** | Daily at **19:00** `Europe/Madrid` — this is when GitHub **queues** the workflow (cron + `timezone: Europe/Madrid`). The runner may start **tens of minutes later**; that delay is normal on hosted runners, not a broken timezone. The workflow is set earlier in the evening so the Java process can still run **before** the 20:00 form window in typical conditions. |
+| **Schedule** | Daily at **17:00** `Europe/Madrid` (when GitHub **queues** the job). The workflow then **waits until 19:35** Madrid before `mvn` and the JAR; the app waits until **19:59:20 / 20:00:02** for login and form fill. If the runner is assigned after **19:57** Madrid, the job **fails fast** (no booking attempt). Job timeout is **180** minutes so an early runner can idle until 19:35. Queue delay on `ubuntu-latest` is still variable — for reliable wall-clock timing use [local cron](#local-cron-optional) or a self-hosted runner. |
 | **workflow_dispatch** | Run manually: **Actions** → workflow → **Run workflow**. |
 
 ### Repository secrets
@@ -106,7 +106,7 @@ The workflow maps these to process environment variables for the JAR:
 
 - For a **dry run** in CI: leave **skip_madrid_time_wait** checked and pick **target_date_offset_days** as needed.
 - For a **time-accurate rehearsal** (rare on Actions): uncheck **skip_madrid_time_wait**; note the job can still start late relative to 20:00 because of the queue.
-- Job **timeout** is 30 minutes (see workflow `timeout-minutes`).
+- Job **timeout** is 180 minutes for scheduled runs (idle wait until 19:35 + booking); manual runs use the same workflow file.
 
 ## Target date
 

@@ -16,14 +16,10 @@ on:
           - "0"
         default: "2"
   schedule:
-    # Europe/Madrid: cron is when GitHub *queues* the workflow, not when a
-    # runner starts. On ubuntu-latest, starts are often ~30–60 minutes later
-    # (capacity), so a 19:50 cron can begin ~20:20–20:30 local — that is delay,
-    # not a broken timezone (19:50 Madrid ≈ 17:50 UTC; observed ~18:29 UTC).
-    #
-    # Schedule earlier so queue + checkout/build still land before ~20:00 when
-    # the Java app submits. Tune if your runs still start too early/late.
-    - cron: "0 19 * * *"
+    # Queue early: ubuntu-latest often assigns a runner 1–2h after cron. The job
+    # then sleeps until 19:35 Europe/Madrid before mvn + jar (see wait step). The
+    # Java app still waits until 19:59:20 / 20:00:02 for login and form fill.
+    - cron: "0 17 * * *"
       timezone: "Europe/Madrid"
 
 concurrency:
@@ -33,7 +29,8 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Scheduled runs may idle until 19:35 Madrid, then build + ~20:00 booking window.
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -116,6 +113,48 @@ jobs:
           ])
 
           pathlib.Path(".env").write_text(env_text, encoding="utf-8")
+          PY
+
+      - name: Wait until pre-build window (Europe/Madrid)
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import time
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          madrid = ZoneInfo("Europe/Madrid")
+          now = datetime.now(madrid)
+          target = now.replace(hour=19, minute=35, second=0, microsecond=0)
+          if now >= target:
+              print(f"Already at/after pre-build window ({now:%H:%M:%S} >= {target:%H:%M:%S} Madrid)")
+          else:
+              seconds = (target - now).total_seconds()
+              print(f"Sleeping {seconds:.0f}s until {target:%H:%M:%S} Europe/Madrid")
+              time.sleep(seconds)
+              print("Pre-build window reached")
+          PY
+
+      - name: Abort if runner is too late for 20:00 booking
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from datetime import datetime, time
+          from zoneinfo import ZoneInfo
+
+          madrid = ZoneInfo("Europe/Madrid")
+          now = datetime.now(madrid)
+          deadline = time(19, 57, 0)
+          if now.time() > deadline:
+              raise SystemExit(
+                  f"Runner started too late for booking: now={now:%H:%M:%S} Madrid, "
+                  f"deadline={deadline:%H:%M:%S} (need time to build + hit 19:59:20 driver window)"
+              )
+          print(f"OK to build and run ({now:%H:%M:%S} Madrid <= {deadline:%H:%M:%S})")
           PY
 
       - name: Build fat jar
