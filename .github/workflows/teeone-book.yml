@@ -19,7 +19,7 @@ on:
     # Queue early: ubuntu-latest often assigns a runner 1–2h after cron. The job
     # then sleeps until 19:35 Europe/Madrid before mvn + jar (see wait step). The
     # Java app still waits until 19:59:20 / 20:00:02 for login and form fill.
-    - cron: "0 17 * * *"
+    - cron: "0 16 * * *"
       timezone: "Europe/Madrid"
 
 concurrency:
