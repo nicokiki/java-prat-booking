@@ -16,10 +16,10 @@ on:
           - "0"
         default: "2"
   schedule:
-    # Queue early: ubuntu-latest often assigns a runner 1–2h after cron. The job
+    # Queue early and off the hour to give delayed scheduled triggers more margin. The job
     # then sleeps until 19:35 Europe/Madrid before mvn + jar (see wait step). The
     # Java app still waits until 19:59:20 / 20:00:02 for login and form fill.
-    - cron: "0 16 * * *"
+    - cron: "17 14 * * *"
       timezone: "Europe/Madrid"
 
 concurrency:
@@ -30,9 +30,52 @@ jobs:
   run:
     runs-on: ubuntu-latest
     # Scheduled runs may idle until 19:35 Madrid, then build + ~20:00 booking window.
-    timeout-minutes: 180
+    timeout-minutes: 360
 
     steps:
+      - name: Abort if runner is too late for 20:00 booking
+        id: booking_window
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from datetime import datetime, time
+          from zoneinfo import ZoneInfo
+
+          madrid = ZoneInfo("Europe/Madrid")
+          now = datetime.now(madrid)
+          deadline = time(19, 57, 0)
+          if now.time() > deadline:
+              raise SystemExit(
+                  f"Runner started too late for booking: now={now:%H:%M:%S} Madrid, "
+                  f"deadline={deadline:%H:%M:%S} (need time to build + hit 19:59:20 driver window)"
+              )
+          print(f"OK to build and run ({now:%H:%M:%S} Madrid <= {deadline:%H:%M:%S})")
+          PY
+
+      - name: Wait until pre-build window (Europe/Madrid)
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import time
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          madrid = ZoneInfo("Europe/Madrid")
+          now = datetime.now(madrid)
+          target = now.replace(hour=19, minute=35, second=0, microsecond=0)
+          if now >= target:
+              print(f"Already at/after pre-build window ({now:%H:%M:%S} >= {target:%H:%M:%S} Madrid)")
+          else:
+              seconds = (target - now).total_seconds()
+              print(f"Sleeping {seconds:.0f}s until {target:%H:%M:%S} Europe/Madrid")
+              time.sleep(seconds)
+              print("Pre-build window reached")
+          PY
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -115,48 +158,6 @@ jobs:
           pathlib.Path(".env").write_text(env_text, encoding="utf-8")
           PY
 
-      - name: Wait until pre-build window (Europe/Madrid)
-        if: github.event_name == 'schedule'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import time
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-
-          madrid = ZoneInfo("Europe/Madrid")
-          now = datetime.now(madrid)
-          target = now.replace(hour=19, minute=35, second=0, microsecond=0)
-          if now >= target:
-              print(f"Already at/after pre-build window ({now:%H:%M:%S} >= {target:%H:%M:%S} Madrid)")
-          else:
-              seconds = (target - now).total_seconds()
-              print(f"Sleeping {seconds:.0f}s until {target:%H:%M:%S} Europe/Madrid")
-              time.sleep(seconds)
-              print("Pre-build window reached")
-          PY
-
-      - name: Abort if runner is too late for 20:00 booking
-        if: github.event_name == 'schedule'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from datetime import datetime, time
-          from zoneinfo import ZoneInfo
-
-          madrid = ZoneInfo("Europe/Madrid")
-          now = datetime.now(madrid)
-          deadline = time(19, 57, 0)
-          if now.time() > deadline:
-              raise SystemExit(
-                  f"Runner started too late for booking: now={now:%H:%M:%S} Madrid, "
-                  f"deadline={deadline:%H:%M:%S} (need time to build + hit 19:59:20 driver window)"
-              )
-          print(f"OK to build and run ({now:%H:%M:%S} Madrid <= {deadline:%H:%M:%S})")
-          PY
-
       - name: Build fat jar
         shell: bash
         run: |
@@ -175,4 +176,57 @@ jobs:
         run: |
           set -euo pipefail
           java -jar target/teeone-booking-jar-with-dependencies.jar
+
+      - name: Email alert when scheduled run starts too late
+        if: failure() && steps.booking_window.outcome == 'failure'
+        shell: bash
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          EMAIL_SMTP_SSL: ${{ secrets.EMAIL_SMTP_SSL }}
+          EMAIL_SMTP_STARTTLS: ${{ secrets.EMAIL_SMTP_STARTTLS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import smtplib
+          import ssl
+          from email.message import EmailMessage
+          from email.utils import getaddresses
+
+          sender = os.environ["EMAIL_FROM"]
+          recipients = [address for _, address in getaddresses([os.environ["EMAIL_TO"]]) if address]
+          if not sender or not recipients:
+              raise SystemExit("Missing EMAIL_FROM or EMAIL_TO for late-start alert")
+
+          message = EmailMessage()
+          message["From"] = sender
+          message["To"] = ", ".join(recipients)
+          message["Subject"] = "TeeOne Booking: Skipped (Actions started too late)"
+          message.set_content(
+              "The scheduled GitHub Actions job started after the 19:57 Europe/Madrid deadline.\n"
+              "No booking was attempted.\n\n"
+              "Run details: " + os.environ["RUN_URL"]
+          )
+
+          host = os.environ.get("EMAIL_SMTP_HOST") or "smtp.gmail.com"
+          port = int(os.environ.get("EMAIL_SMTP_PORT") or "587")
+          use_ssl = os.environ.get("EMAIL_SMTP_SSL", "false").lower() == "true"
+          use_starttls = os.environ.get("EMAIL_SMTP_STARTTLS", "true").lower() != "false"
+          context = ssl.create_default_context()
+          if use_ssl:
+              transport = smtplib.SMTP_SSL(host, port, timeout=15, context=context)
+          else:
+              transport = smtplib.SMTP(host, port, timeout=15)
+          with transport:
+              if use_starttls and not use_ssl:
+                  transport.starttls(context=context)
+              transport.login(sender, os.environ["EMAIL_PASSWORD"])
+              transport.send_message(message, from_addr=sender, to_addrs=recipients)
+          print("Late-start alert email sent")
+          PY
 

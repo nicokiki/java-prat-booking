@@ -64,7 +64,7 @@ Workflow: [`.github/workflows/teeone-book.yml`](.github/workflows/teeone-book.ym
 
 | Trigger | When |
 |--------|------|
-| **Schedule** | Daily at **17:00** `Europe/Madrid` (when GitHub **queues** the job). The workflow then **waits until 19:35** Madrid before `mvn` and the JAR; the app waits until **19:59:20 / 20:00:02** for login and form fill. If the runner is assigned after **19:57** Madrid, the job **fails fast** (no booking attempt). Job timeout is **180** minutes so an early runner can idle until 19:35. Queue delay on `ubuntu-latest` is still variable — for reliable wall-clock timing use [local cron](#local-cron-optional) or a self-hosted runner. |
+| **Schedule** | Daily at **14:17** `Europe/Madrid`, away from the top of the hour and with extra margin for delayed triggers. The workflow **waits until 19:35** Madrid before setup, `mvn`, and the JAR; the app waits until **19:59:20 / 20:00:02** for login and form fill. If the runner starts after **19:57** Madrid, the job **fails fast before setup** (no booking attempt) and attempts an email alert using the SMTP secrets. Job timeout is **360** minutes so an early runner can idle until 19:35. GitHub scheduled triggers and hosted-runner startup can still be delayed; this schedule does not guarantee punctual execution. |
 | **workflow_dispatch** | Run manually: **Actions** → workflow → **Run workflow**. |
 
 ### Repository secrets
@@ -106,7 +106,8 @@ The workflow maps these to process environment variables for the JAR:
 
 - For a **dry run** in CI: leave **skip_madrid_time_wait** checked and pick **target_date_offset_days** as needed.
 - For a **time-accurate rehearsal** (rare on Actions): uncheck **skip_madrid_time_wait**; note the job can still start late relative to 20:00 because of the queue.
-- Job **timeout** is 180 minutes for scheduled runs (idle wait until 19:35 + booking); manual runs use the same workflow file.
+- Job **timeout** is 360 minutes for scheduled runs (idle wait until 19:35 + booking); manual runs use the same workflow file.
+- For an external scheduler calling `workflow_dispatch`, set **skip_madrid_time_wait** to **false** and **target_date_offset_days** to **2**. External scheduling requires separate setup. Avoid dispatching another run while one is active: the shared concurrency group cancels the previous run, and does not prevent duplicate bookings after a completed run.
 
 ## Target date
 
