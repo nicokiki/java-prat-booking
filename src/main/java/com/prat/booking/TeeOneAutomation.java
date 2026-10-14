@@ -74,7 +74,7 @@ public class TeeOneAutomation {
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
         ZonedDateTime loginCompleteBy = nowMadrid.toLocalDate().atTime(LocalTime.of(19, 59, 50)).atZone(madrid);
         ZonedDateTime initDriverAt = loginCompleteBy.minusSeconds(30);
-        ZonedDateTime fillAt = nowMadrid.toLocalDate().atTime(LocalTime.of(20, 0, 2)).atZone(madrid);
+        ZonedDateTime fillAt = nowMadrid.toLocalDate().atTime(LocalTime.of(20, 0, 1)).atZone(madrid);
         if (Config.skipMadridTimeWait()) {
             ZonedDateTime past = nowMadrid.minusSeconds(1);
             initDriverAt = past;

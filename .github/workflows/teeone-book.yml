@@ -18,7 +18,7 @@ on:
   schedule:
     # Queue early and off the hour to give delayed scheduled triggers more margin. The job
     # then sleeps until 19:35 Europe/Madrid before mvn + jar (see wait step). The
-    # Java app still waits until 19:59:20 / 20:00:02 for login and form fill.
+    # Java app still waits until 19:59:20 / 20:00:01 for login and form fill.
     - cron: "17 14 * * *"
       timezone: "Europe/Madrid"
 

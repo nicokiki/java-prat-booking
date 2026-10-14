@@ -96,7 +96,7 @@ public class Config {
     }
 
     /**
-     * When true, the booking automation does not sleep until 19:59:20 / 20:00:02 Europe/Madrid.
+    * When true, the booking automation does not sleep until 19:59:20 / 20:00:01 Europe/Madrid.
      * Set {@code SKIP_MADRID_TIME_WAIT=true} in the environment (e.g. GitHub Actions manual workflow input)
      * or in {@code .env} for local dry runs.
      */

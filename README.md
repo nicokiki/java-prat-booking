@@ -64,7 +64,7 @@ Workflow: [`.github/workflows/teeone-book.yml`](.github/workflows/teeone-book.ym
 
 | Trigger | When |
 |--------|------|
-| **Schedule** | Daily at **14:17** `Europe/Madrid`, away from the top of the hour and with extra margin for delayed triggers. The workflow **waits until 19:35** Madrid before setup, `mvn`, and the JAR; the app waits until **19:59:20 / 20:00:02** for login and form fill. If the runner starts after **19:57** Madrid, the job **fails fast before setup** (no booking attempt) and attempts an email alert using the SMTP secrets. Job timeout is **360** minutes so an early runner can idle until 19:35. GitHub scheduled triggers and hosted-runner startup can still be delayed; this schedule does not guarantee punctual execution. |
+| **Schedule** | Daily at **14:17** `Europe/Madrid`, away from the top of the hour and with extra margin for delayed triggers. The workflow **waits until 19:35** Madrid before setup, `mvn`, and the JAR; the app waits until **19:59:20 / 20:00:01** for login and form fill. If the runner starts after **19:57** Madrid, the job **fails fast before setup** (no booking attempt) and attempts an email alert using the SMTP secrets. Job timeout is **360** minutes so an early runner can idle until 19:35. GitHub scheduled triggers and hosted-runner startup can still be delayed; this schedule does not guarantee punctual execution. |
 | **workflow_dispatch** | Run manually: **Actions** → workflow → **Run workflow**. |
 
 ### Repository secrets
@@ -122,7 +122,7 @@ When **`SKIP_MADRID_TIME_WAIT`** is **not** set (or `false`):
 |------|------------------------------------------------------|
 | Start browser / driver | **~19:59:20** |
 | **Login** + **Recorrido** visible | **By ~19:59:50** (deadline) |
-| Start form fill (Recorrido, hoyos, jugadores, hora, …) | **~20:00:02** |
+| Start form fill (Recorrido, hoyos, jugadores, hora, …) | **~20:00:01** |
 
 If the JVM starts **after** these times, the code does **not** wait backwards; it continues immediately (with “already past deadline” style logs). So for predictable behaviour the process should start **before** ~20:00 Madrid.
 
@@ -136,7 +136,7 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 
 | Variable | Default | Purpose |
 |----------|---------|--------|
-| `SKIP_MADRID_TIME_WAIT` | unset → false | `true` skips the 19:59:20 / 20:00:02 Madrid waits (process env, then `.env`) |
+| `SKIP_MADRID_TIME_WAIT` | unset → false | `true` skips the 19:59:20 / 20:00:01 Madrid waits (process env, then `.env`) |
 | `BOOKING_TARGET_DATE_OFFSET_DAYS` | `2` | `0`–`2` — days from today for sheet/URL (process env, then `.env`) |
 | `HEADLESS` | `true` | `false` shows Chrome (useful when debugging) |
 | `WAIT_AFTER_RECORRIDO_MS` | `1200` | After changing Recorrido, pause before the next control (ms) |
@@ -160,7 +160,7 @@ CRON_TZ=Europe/Madrid
 50 19 * * * cd /path/to/java-prat-booking && /usr/bin/java -jar target/teeone-booking-jar-with-dependencies.jar >> logs/cron.log 2>&1
 ```
 
-The **application** then applies its own 19:59:20 / 20:00:02 waits (without `SKIP_MADRID_TIME_WAIT`).
+The **application** then applies its own 19:59:20 / 20:00:01 waits (without `SKIP_MADRID_TIME_WAIT`).
 
 ## Troubleshooting
 
