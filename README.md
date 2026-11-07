@@ -68,6 +68,85 @@ Workflow: [`.github/workflows/teeone-book.yml`](.github/workflows/teeone-book.ym
 
 The built-in GitHub cron trigger is disabled. Automatic daily runs require an external scheduler to be configured separately; until then, only manual/API dispatches run. Dispatch daily around **19:00 Europe/Madrid** with **skip_madrid_time_wait=false** and **target_date_offset_days=2**. Hosted-runner startup can still be delayed.
 
+### External scheduling with cron-job.org
+
+[cron-job.org](https://cron-job.org/en/faq/) sends one HTTP request each day to dispatch the workflow. It does **not** run Java or hold the HTTP connection open until booking time. GitHub accepts the request, queues a runner, and the workflow/application handle the waits.
+
+#### Daily execution timeline
+
+All times below are **Europe/Madrid**, including daylight-saving changes:
+
+1. **19:00:** cron-job.org sends the dispatch request to GitHub. The HTTP response confirms whether the request was accepted, not whether a booking succeeded.
+2. **When the runner starts:** the workflow checks the clock. After **19:57:00**, it fails before checkout/setup and attempts a late-start email alert; no booking is attempted.
+3. **Until 19:35:** the runner waits before checkout, Java/Chrome setup, credentials creation, and the Maven build. A runner starting between 19:35 and the cutoff skips this wait and starts setup immediately.
+4. **Around 19:59:20:** the Java application starts browser/login preparation, aiming for login and the **Recorrido** field to be ready by **19:59:50**.
+5. **Around 20:00:01:** the application starts filling the booking form, attempts the reservation, and sends the result email.
+
+These are intended timings, not a punctuality guarantee. External scheduling avoids GitHub's built-in cron-trigger delays, but cron-job.org, runner allocation, setup/build, and the booking site can still be delayed. The initial cutoff does not guarantee that a slow setup/build finishes in time.
+
+#### Create a restricted GitHub token
+
+In GitHub, open **Settings → Developer settings → Personal access tokens → Fine-grained tokens**:
+
+1. Create a token for the repository owner and select **only `java-prat-booking`**.
+2. Grant repository permission **Actions: Read and write**.
+3. Set an expiration and a renewal reminder. If owner/organization approval is required, obtain it before testing.
+
+The direct integration requires storing this token in cron-job.org's request settings. Treat it as a secret: never put it in the URL, commit it, or include it in screenshots/logs. Revoke and replace it if exposed, and update the scheduler before it expires. TeeOne, Google Sheets, and SMTP credentials remain in **GitHub Actions secrets**, not in cron-job.org.
+
+#### Configure the cron-job.org job
+
+Create an account and one enabled job with:
+
+- **Schedule:** every day at **19:00**.
+- **Timezone:** **Europe/Madrid**; verify the displayed next execution time before enabling the job.
+- **HTTP method:** **POST**.
+- **URL:**
+
+```text
+https://api.github.com/repos/nicokiki/java-prat-booking/actions/workflows/teeone-book.yml/dispatches
+```
+
+In the advanced request settings, add these headers, replacing the token placeholder privately:
+
+```text
+Authorization: Bearer YOUR_GITHUB_TOKEN
+Accept: application/vnd.github+json
+Content-Type: application/json
+X-GitHub-Api-Version: 2022-11-28
+```
+
+Set the request body to:
+
+```json
+{
+  "ref": "main",
+  "inputs": {
+    "skip_madrid_time_wait": false,
+    "target_date_offset_days": "2"
+  }
+}
+```
+
+Explicitly passing **false** is essential: the workflow input defaults to **true**, which bypasses both the timing checks and waits. The workflow must be present on GitHub's default branch, and `main` must contain the dispatch-enabled version.
+
+Enable scheduler failure notifications. Avoid automatic retries or a second scheduler that can dispatch duplicate runs: a retry after an ambiguous HTTP timeout may create another run even if GitHub accepted the first request. The workflow's **cancel-in-progress** setting cancels an active run when another is dispatched; it does not deduplicate completed bookings.
+
+#### Verify and operate
+
+Testing the HTTP request launches the **real booking workflow**. Test only on an intended booking day, before **19:57 Madrid**, and do not issue another test while a run is active. Neither bypassing the waits nor changing the target date makes a run a dry run.
+
+1. Check cron-job.org's execution history. A successful dispatch normally returns **HTTP 204 No Content**; an empty response is expected.
+2. Open **GitHub → Actions → TeeOne booking (scheduled)** and confirm a new run appeared on `main`.
+3. Check that the late-start guard passed and the **Wait until pre-build window** step waits until 19:35 (or reports that the time has already passed).
+4. Check the eventual GitHub run result and booking email. Scheduler success only confirms dispatch; it does not monitor the later Actions job or reservation.
+
+For a rejected request, check the token's validity, repository selection, Actions permission, workflow filename, branch, and JSON body. If a request times out, inspect GitHub Actions before retrying. For a late-start email, inspect the runner's start time; repeatedly dispatching cannot recover the missed booking window.
+
+For a manual fallback, use **Run workflow**, uncheck **skip_madrid_time_wait**, and select **target_date_offset_days=2** before the cutoff. First confirm no daily run is already active or has completed the booking.
+
+**Activation checklist:** workflow changes pushed to `main`; token created; cron-job.org configured and enabled; next execution time checked; one intended booking run verified. Until the external job is enabled, there are **no automatic daily triggers**. Pause the cron-job.org job to stop future automatic dispatches; pausing it does not cancel a run already queued or running in GitHub.
+
 ### Repository secrets
 
 Configure these under **Settings → Secrets and variables → Actions** (names must match the workflow):
