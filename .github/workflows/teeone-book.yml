@@ -4,23 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       skip_madrid_time_wait:
-        description: "Run immediately without waiting for 19:59 / 20:00 Europe/Madrid (for testing)"
+        description: "Run immediately without the 19:35 / 19:59 / 20:00 Europe/Madrid waits or late-start check (for testing)"
         type: boolean
         default: true
       target_date_offset_days:
-        description: "Days from today for sheet row + URL when Fecha is empty (scheduled runs always use 2)"
+        description: "Days from today for sheet row + URL when Fecha is empty (external scheduler should use 2)"
         type: choice
         options:
           - "2"
           - "1"
           - "0"
         default: "2"
-  schedule:
-    # Queue early and off the hour to give delayed scheduled triggers more margin. The job
-    # then sleeps until 19:35 Europe/Madrid before mvn + jar (see wait step). The
-    # Java app still waits until 19:59:20 / 20:00:01 for login and form fill.
-    - cron: "17 14 * * *"
-      timezone: "Europe/Madrid"
 
 concurrency:
   group: teeone-booking-scheduled
@@ -29,13 +23,13 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # Scheduled runs may idle until 19:35 Madrid, then build + ~20:00 booking window.
+    # Dispatches with waiting enabled idle until 19:35 Madrid, then build + ~20:00 booking window.
     timeout-minutes: 360
 
     steps:
       - name: Abort if runner is too late for 20:00 booking
         id: booking_window
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.skip_madrid_time_wait)
         shell: bash
         run: |
           set -euo pipefail
@@ -55,7 +49,7 @@ jobs:
           PY
 
       - name: Wait until pre-build window (Europe/Madrid)
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.skip_madrid_time_wait)
         shell: bash
         run: |
           set -euo pipefail
@@ -169,15 +163,15 @@ jobs:
         env:
           # If you want extra logs, set these in repo secrets/vars:
           HEADLESS: "true"
-          # Manual runs: honor workflow checkbox. Scheduled runs: always wait for Madrid window.
+          # Manual and external dispatches honor the workflow checkbox.
           SKIP_MADRID_TIME_WAIT: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_madrid_time_wait && 'true' || 'false' }}
-          # Manual: choice 0/1/2. Scheduled: always 2 (same as previous hard-coded behavior).
+          # Dispatches choose 0/1/2; the external scheduler should pass 2.
           BOOKING_TARGET_DATE_OFFSET_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date_offset_days || '2' }}
         run: |
           set -euo pipefail
           java -jar target/teeone-booking-jar-with-dependencies.jar
 
-      - name: Email alert when scheduled run starts too late
+      - name: Email alert when booking run starts too late
         if: failure() && steps.booking_window.outcome == 'failure'
         shell: bash
         env:
@@ -208,7 +202,7 @@ jobs:
           message["To"] = ", ".join(recipients)
           message["Subject"] = "TeeOne Booking: Skipped (Actions started too late)"
           message.set_content(
-              "The scheduled GitHub Actions job started after the 19:57 Europe/Madrid deadline.\n"
+              "The GitHub Actions booking job started after the 19:57 Europe/Madrid deadline.\n"
               "No booking was attempted.\n\n"
               "Run details: " + os.environ["RUN_URL"]
           )
@@ -229,4 +223,3 @@ jobs:
               transport.send_message(message, from_addr=sender, to_addrs=recipients)
           print("Late-start alert email sent")
           PY
-

@@ -2,7 +2,7 @@
 
 Automated tee time booking for [TeeOne](https://members.teeone.golf) (Prat). It logs in, fills the inscripción form, and confirms the reserva. Booking preferences come from **Google Sheets**; results are sent by **email**. The app is tuned for **Europe/Madrid** wall-clock behaviour around **20:00** so slots that open on the hour are hit at the right time.
 
-You can run it **locally** (Java + Chrome) or on **GitHub Actions** (scheduled or manual).
+You can run it **locally** (Java + Chrome) or on **GitHub Actions** (externally scheduled or manual).
 
 ## Requirements
 
@@ -64,8 +64,9 @@ Workflow: [`.github/workflows/teeone-book.yml`](.github/workflows/teeone-book.ym
 
 | Trigger | When |
 |--------|------|
-| **Schedule** | Daily at **14:17** `Europe/Madrid`, away from the top of the hour and with extra margin for delayed triggers. The workflow **waits until 19:35** Madrid before setup, `mvn`, and the JAR; the app waits until **19:59:20 / 20:00:01** for login and form fill. If the runner starts after **19:57** Madrid, the job **fails fast before setup** (no booking attempt) and attempts an email alert using the SMTP secrets. Job timeout is **360** minutes so an early runner can idle until 19:35. GitHub scheduled triggers and hosted-runner startup can still be delayed; this schedule does not guarantee punctual execution. |
-| **workflow_dispatch** | Run manually: **Actions** → workflow → **Run workflow**. |
+| **workflow_dispatch** | Run manually via **Actions** → workflow → **Run workflow**, or through the GitHub API from an external scheduler. With **skip_madrid_time_wait=false**, the workflow **waits until 19:35** Madrid before setup, `mvn`, and the JAR; the app waits until **19:59:20 / 20:00:01** for login and form fill. If the runner starts after **19:57** Madrid, the job **fails fast before setup** (no booking attempt) and attempts an email alert using the SMTP secrets. |
+
+The built-in GitHub cron trigger is disabled. Automatic daily runs require an external scheduler to be configured separately; until then, only manual/API dispatches run. Dispatch daily around **19:00 Europe/Madrid** with **skip_madrid_time_wait=false** and **target_date_offset_days=2**. Hosted-runner startup can still be delayed.
 
 ### Repository secrets
 
@@ -94,25 +95,25 @@ When you click **Run workflow**, you can set:
 
 | Input | Default | Meaning |
 |--------|---------|--------|
-| **skip_madrid_time_wait** | `true` (checked) | If **true**: do **not** wait for the internal Europe/Madrid “clock” (see [Time window](#time-window-europemadrid)); the flow runs as soon as the JAR starts. If **false**: use the same waits as production. **Scheduled runs always behave as if this is false** (ignores the checkbox). |
-| **target_date_offset_days** | `2` | `0` = today, `1` = tomorrow, `2` = in two days — for **which sheet row** and, when the sheet’s **Fecha** is empty, the booking URL date. **Scheduled runs always use `2`.** |
+| **skip_madrid_time_wait** | `true` (checked) | If **true**: bypass the 19:35 wait, late-start check, and internal Europe/Madrid waits (see [Time window](#time-window-europemadrid)); the flow runs as soon as the JAR starts. If **false**: enforce the 19:57 cutoff and use the production waits. External schedulers must explicitly pass **false**. |
+| **target_date_offset_days** | `2` | `0` = today, `1` = tomorrow, `2` = in two days — for **which sheet row** and, when the sheet’s **Fecha** is empty, the booking URL date. External schedulers should pass **2**. |
 
 The workflow maps these to process environment variables for the JAR:
 
-- `SKIP_MADRID_TIME_WAIT` = `true` or `false` (manual only; scheduled → always `false`)
-- `BOOKING_TARGET_DATE_OFFSET_DAYS` = `0`, `1`, or `2` (manual) or `2` (scheduled)
+- `SKIP_MADRID_TIME_WAIT` = `true` or `false` from the dispatch input
+- `BOOKING_TARGET_DATE_OFFSET_DAYS` = `0`, `1`, or `2` from the dispatch input
 
 ### Tips
 
-- For a **dry run** in CI: leave **skip_madrid_time_wait** checked and pick **target_date_offset_days** as needed.
+- For an **immediate run** in CI: leave **skip_madrid_time_wait** checked and pick **target_date_offset_days** as needed. This is not a dry run: it can make a real booking.
 - For a **time-accurate rehearsal** (rare on Actions): uncheck **skip_madrid_time_wait**; note the job can still start late relative to 20:00 because of the queue.
-- Job **timeout** is 360 minutes for scheduled runs (idle wait until 19:35 + booking); manual runs use the same workflow file.
+- Job **timeout** is 360 minutes for all dispatches, including the idle wait until 19:35 when enabled.
 - For an external scheduler calling `workflow_dispatch`, set **skip_madrid_time_wait** to **false** and **target_date_offset_days** to **2**. External scheduling requires separate setup. Avoid dispatching another run while one is active: the shared concurrency group cancels the previous run, and does not prevent duplicate bookings after a completed run.
 
 ## Target date
 
 - **Default:** `LocalDate.now()` + **`BOOKING_TARGET_DATE_OFFSET_DAYS`** (default **2** days) — used to find the **Google Sheet** row and, when the row has no **Fecha**, to build the inscripción URL date.
-- **Override:** set `BOOKING_TARGET_DATE_OFFSET_DAYS` in `.env` or, on GitHub, only for **manual** runs via **target_date_offset_days**.
+- **Override:** set `BOOKING_TARGET_DATE_OFFSET_DAYS` in `.env` or, on GitHub, via the **target_date_offset_days** dispatch input.
 
 ## Time window (Europe/Madrid)
 
@@ -130,7 +131,7 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 
 - **Local:** in `.env` set `SKIP_MADRID_TIME_WAIT=true` (or export it in the shell).
 - **GitHub — manual run:** use the **skip_madrid_time_wait** input (default true = bypass).
-- **GitHub — scheduled run:** `SKIP_MADRID_TIME_WAIT` is always **`false`**; the app uses the normal Madrid window.
+- **GitHub — externally scheduled run:** pass **skip_madrid_time_wait=false**; the workflow enforces the late-start cutoff and the app uses the normal Madrid window.
 
 ## Optional environment variables
 
