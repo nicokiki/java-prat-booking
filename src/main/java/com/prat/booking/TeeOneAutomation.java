@@ -4,7 +4,9 @@ import org.openqa.selenium.By;
 import org.openqa.selenium.ElementClickInterceptedException;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.OutputType;
 import org.openqa.selenium.StaleElementReferenceException;
+import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
@@ -49,6 +51,7 @@ public class TeeOneAutomation {
     private String reservationAlertText;
     /** Visible labels from the Hora de juego dropdown after it is read; used in notification emails. */
     private String horaDeJuegoDropdownOptions;
+    private byte[] reservationScreenshot;
 
     public TeeOneAutomation() {
         // Driver is initialized later (time-based) from performBooking()
@@ -71,6 +74,7 @@ public class TeeOneAutomation {
         reservationAlertClass = null;
         reservationAlertText = null;
         horaDeJuegoDropdownOptions = null;
+        reservationScreenshot = null;
 
         ZoneId madrid = ZoneId.of("Europe/Madrid");
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
@@ -712,6 +716,29 @@ public class TeeOneAutomation {
 
         // Store final success boolean for Main.java to use.
         reservationSuccess = computeSuccessFromDom();
+        captureSuccessfulReservationScreenshot();
+    }
+
+    private void captureSuccessfulReservationScreenshot() {
+        if (!Boolean.TRUE.equals(reservationSuccess)) {
+            return;
+        }
+        try {
+            reservationScreenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
+            if (reservationScreenshot == null || reservationScreenshot.length == 0) {
+                reservationScreenshot = null;
+                log.warn("Successful reservation screenshot was empty; sending email without attachment");
+            } else {
+                log.info("Captured successful reservation screenshot ({} bytes)", reservationScreenshot.length);
+            }
+        } catch (Exception e) {
+            reservationScreenshot = null;
+            log.warn("Could not capture successful reservation screenshot; booking remains successful", e);
+        }
+    }
+
+    public byte[] getReservationScreenshot() {
+        return reservationScreenshot == null ? null : reservationScreenshot.clone();
     }
 
     private void clickWithScrollAndJsFallback(WebElement el, String description) {
