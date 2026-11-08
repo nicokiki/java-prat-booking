@@ -255,6 +255,13 @@ check out main and rebuild the JAR. To roll back a merged change, use the PR's
 
 ### Successful booking screenshot
 
+The success email subject and body include the confirmation date and time in
+`Europe/Madrid`, recorded immediately when the existing success-message check
+passes after RESERVAR, before screenshot capture or email delivery. The body
+includes the UTC offset for that date, including daylight-saving adjustments.
+This is when the automation detects confirmation, not the scheduled tee time
+or a server-provided transaction timestamp.
+
 After RESERVAR has been clicked and the existing success-message check confirms
 the reservation, the automation captures the visible browser viewport as a PNG.
 The success email includes it as `booking-confirmation.png`, alongside the

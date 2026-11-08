@@ -9,10 +9,38 @@ import org.junit.Test;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.Properties;
+import java.time.ZonedDateTime;
 
 import static org.junit.Assert.*;
 
 public class EmailNotifierTest {
+    @Test
+    public void confirmationTimeIsMadridTimeInSubjectAndBody() {
+        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-11-08T07:39:16Z");
+
+        assertEquals("TeeOne Booking: Success | Confirmed 08 Nov 2026 at 08:39:16 (Madrid)",
+                EmailNotifier.successSubject(confirmedAt));
+        assertEquals("The tee time was booked successfully.\n\n"
+                        + "Booking confirmed: 08 Nov 2026 at 08:39:16\n"
+                        + "Timezone: Europe/Madrid (UTC+01:00)\n\nHorario: 10:00",
+                EmailNotifier.successBody("Horario: 10:00", confirmedAt));
+    }
+
+    @Test
+    public void confirmationTimeUsesMadridSummerOffset() {
+        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-07-08T18:00:05Z");
+
+        assertTrue(EmailNotifier.successSubject(confirmedAt).contains("08 Jul 2026 at 20:00:05"));
+        assertTrue(EmailNotifier.successBody("Details", confirmedAt).contains("UTC+02:00"));
+    }
+
+    @Test
+    public void missingConfirmationTimePreservesLegacyEmailText() {
+        assertEquals("TeeOne Booking: Success", EmailNotifier.successSubject(null));
+        assertEquals("The tee time was booked successfully.\n\nDetails",
+                EmailNotifier.successBody("Details", null));
+    }
+
     @Test
     public void successScreenshotIsPngAttachmentWithOriginalDetails() throws Exception {
         byte[] png = new byte[]{(byte) 137, 80, 78, 71, 13, 10, 26, 10};

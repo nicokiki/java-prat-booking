@@ -52,6 +52,7 @@ public class TeeOneAutomation {
     /** Visible labels from the Hora de juego dropdown after it is read; used in notification emails. */
     private String horaDeJuegoDropdownOptions;
     private byte[] reservationScreenshot;
+    private ZonedDateTime reservationConfirmedAt;
 
     public TeeOneAutomation() {
         // Driver is initialized later (time-based) from performBooking()
@@ -75,6 +76,7 @@ public class TeeOneAutomation {
         reservationAlertText = null;
         horaDeJuegoDropdownOptions = null;
         reservationScreenshot = null;
+        reservationConfirmedAt = null;
 
         ZoneId madrid = ZoneId.of("Europe/Madrid");
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
@@ -716,6 +718,8 @@ public class TeeOneAutomation {
 
         // Store final success boolean for Main.java to use.
         reservationSuccess = computeSuccessFromDom();
+        reservationConfirmedAt = Boolean.TRUE.equals(reservationSuccess)
+            ? ZonedDateTime.now(ZoneId.of("Europe/Madrid")) : null;
         captureSuccessfulReservationScreenshot();
     }
 
@@ -739,6 +743,10 @@ public class TeeOneAutomation {
 
     public byte[] getReservationScreenshot() {
         return reservationScreenshot == null ? null : reservationScreenshot.clone();
+    }
+
+    public ZonedDateTime getReservationConfirmedAt() {
+        return reservationConfirmedAt;
     }
 
     private void clickWithScrollAndJsFallback(WebElement el, String description) {

@@ -176,7 +176,11 @@ public class TeeOneAutomationTest {
         doReturn(reservar).when(driver).findElement(By.id("EnviarInscripcion"));
         when(driver.findElements(any(By.class))).thenReturn(List.of(alert));
         byte[] png = new byte[]{1, 2, 3};
-        when(((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES)).thenReturn(png);
+        when(((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES)).thenAnswer(invocation -> {
+            assertNotNull(automation.getReservationConfirmedAt());
+            assertEquals("Europe/Madrid", automation.getReservationConfirmedAt().getZone().getId());
+            return png;
+        });
 
         invoke("confirmReservation", new Class<?>[]{});
 
@@ -202,6 +206,23 @@ public class TeeOneAutomationTest {
 
         assertEquals(Boolean.TRUE, automation.getReservationSuccess());
         assertNull(automation.getReservationScreenshot());
+    }
+
+    @Test
+    public void unsuccessfulReservationHasNoConfirmationTimestamp() throws Exception {
+        WebElement reservar = mock(WebElement.class);
+        WebElement alert = mock(WebElement.class);
+        doReturn(reservar).when(driver).findElement(By.id("EnviarInscripcion"));
+        when(driver.findElements(any(By.class))).thenReturn(List.of(alert));
+        doReturn(List.of()).when(driver).findElements(By.xpath(
+                "//div[contains(@class,'alert') and contains(@class,'alert-info') and " +
+                        "contains(normalize-space(.),'La reserva se ha realizado correctamente')]"));
+
+        invoke("confirmReservation", new Class<?>[]{});
+
+        assertEquals(Boolean.FALSE, automation.getReservationSuccess());
+        assertNull(automation.getReservationConfirmedAt());
+        verify((TakesScreenshot) driver, never()).getScreenshotAs(OutputType.BYTES);
     }
 
     @Test

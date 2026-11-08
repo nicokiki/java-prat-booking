@@ -35,7 +35,8 @@ public class Main {
                 String details = String.format("Fecha: %s\nRecorrido: %s\nHorario: %s\nSocios: %d",
                         data.getFecha(), data.getRecorrido(), data.getHorario(), data.getSocios());
                 details = withHoraDeJuegoDropdownOptions(details, automation);
-                new EmailNotifier().sendSuccess(details, automation.getReservationScreenshot());
+                new EmailNotifier().sendSuccess(details, automation.getReservationScreenshot(),
+                    automation.getReservationConfirmedAt());
                 log.info("Booking completed successfully");
             } else {
                 String alert = automation.getReservationAlertText();
