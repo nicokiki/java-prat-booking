@@ -4,6 +4,7 @@ import org.openqa.selenium.By;
 import org.openqa.selenium.ElementClickInterceptedException;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
@@ -25,6 +26,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -203,45 +205,29 @@ public class TeeOneAutomation {
         log.info("Filling booking form: Recorrido={}, Horario={}, Socios={}", data.getRecorrido(), data.getHorario(), data.getSocios());
 
         selectDropdown("Recorrido", data.getRecorrido());
-        sleep(Duration.ofMillis(Config.waitAfterRecorridoMs()));
         selectDropdown("Número de hoyos", "18");
-        sleep(Duration.ofMillis(100));
         selectDropdown("Jugadores", String.valueOf(data.getSocios()));
-        sleep(Duration.ofMillis(500));
         selectHoraDeJuego(data.getHorario(), data.getSocios());
-        sleep(Duration.ofMillis(200));
 
         log.info("Already selected recorrido: {}, players: {} and horario: {} ... About to click on bloquear button", data.getRecorrido(), data.getSocios(), data.getHorario());
 
-        WebElement bloquearBtn;
-        try {
-            // Most reliable: the HTML uses id="BtnBloquear"
-            bloquearBtn = driver.findElement(By.id("BtnBloquear"));
-        } catch (NoSuchElementException e) {
-            // Fallback: text is inside a nested <span>, so use descendant text (.) not text()
-            bloquearBtn = driver.findElement(By.xpath(
-                    "//button[@id='BtnBloquear'] | " +
-                    "//button[.//span[normalize-space()='BLOQUEAR']] | " +
-                    "//button[contains(.,'BLOQUEAR')]"));
-        }
+        By bloquearLocator = By.xpath(
+            "//button[@id='BtnBloquear'] | " +
+            "//button[.//span[normalize-space()='BLOQUEAR']] | " +
+            "//button[contains(.,'BLOQUEAR')]");
+        WebElement bloquearBtn = new WebDriverWait(driver, DEFAULT_TIMEOUT)
+            .pollingEvery(Duration.ofMillis(200))
+            .until(ExpectedConditions.elementToBeClickable(bloquearLocator));
+        String bloquearId = bloquearBtn.getAttribute("id");
+        String bloquearClass = bloquearBtn.getAttribute("class");
 
         bloquearBtn.click();
         log.info("Clicked on bloquear button successfully id={} class={}",
-                bloquearBtn.getAttribute("id"), bloquearBtn.getAttribute("class"));
+            bloquearId, bloquearClass);
         sleep(Duration.ofSeconds(2)); // Page reloads after BLOQUEAR
     }
 
     private void selectDropdown(String labelOrName, String value) {
-        WebElement selectEl = findSelectByLabelOrName(labelOrName);
-        if (selectEl == null) {
-            try {
-                selectEl = driver.findElement(By.xpath(
-                        "//label[contains(.,'" + labelOrName + "')]/following::select[1] | " +
-                        "//*[contains(text(),'" + labelOrName + "')]/following::select[1]"));
-            } catch (NoSuchElementException e) {
-                throw new IllegalStateException("Could not find dropdown for: " + labelOrName, e);
-            }
-        }
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Empty value for dropdown: " + labelOrName);
         }
@@ -249,9 +235,9 @@ public class TeeOneAutomation {
         String wantCanon = canonicalOptionLabel(rawWant);
         String wantCompact = compactOptionKey(rawWant);
 
-        if ("Recorrido".equalsIgnoreCase(labelOrName.trim())) {
-            selectEl = waitUntilRecorridoListsMatchingOption(rawWant, wantCanon, wantCompact);
-        }
+        WebElement selectEl = waitUntilDropdownReady(labelOrName,
+            option -> optionMatchesChoice(option, rawWant, wantCanon, wantCompact),
+            "an option matching '" + rawWant + "'");
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
@@ -286,33 +272,36 @@ public class TeeOneAutomation {
         log.info("Dropdown '{}' selected: text='{}' value='{}'", labelOrName, selected.getText(), selected.getAttribute("value"));
     }
 
-    /**
-     * TeeOne repopulates filters after the page loads; the native {@code #Recorrido} options can appear
-     * only after script runs. Poll until our target option exists so we do not read an empty/stale list.
-     */
-    private WebElement waitUntilRecorridoListsMatchingOption(String rawWant, String wantCanon, String wantCompact) {
-        log.info("Waiting for Recorrido options to include a match for '{}'...", rawWant);
+    private WebElement waitUntilDropdownReady(String label, Predicate<WebElement> optionReady,
+                                              String expectedOption) {
+        Duration timeout = "Recorrido".equalsIgnoreCase(label.trim())
+                ? Duration.ofSeconds(25) : DEFAULT_TIMEOUT;
+        log.info("Waiting for dropdown '{}' to be enabled and contain {}...", label, expectedOption);
         try {
-            return new WebDriverWait(driver, Duration.ofSeconds(25))
+            return new WebDriverWait(driver, timeout)
                     .pollingEvery(Duration.ofMillis(200))
+                    .ignoring(StaleElementReferenceException.class)
                     .until(d -> {
-                        WebElement sel;
-                        try {
-                            sel = d.findElement(By.id("Recorrido"));
-                        } catch (NoSuchElementException e) {
+                        WebElement dropdown = findSelectByLabelOrName(label);
+                        if (dropdown == null) {
+                            dropdown = d.findElement(By.xpath(
+                                    "//label[contains(.,'" + label + "')]/following::select[1] | " +
+                                    "//*[contains(text(),'" + label + "')]/following::select[1]"));
+                        }
+                        if (!dropdown.isDisplayed() || !dropdown.isEnabled()) {
                             return null;
                         }
-                        Select s = new Select(sel);
-                        for (WebElement opt : s.getOptions()) {
-                            if (optionMatchesChoice(opt, rawWant, wantCanon, wantCompact)) {
-                                return sel;
+                        for (WebElement option : new Select(dropdown).getOptions()) {
+                            if (option.isEnabled() && optionReady.test(option)) {
+                                return dropdown;
                             }
                         }
                         return null;
                     });
         } catch (TimeoutException e) {
             throw new IllegalStateException(
-                    "Timed out waiting for Recorrido <select> to list an option matching: " + rawWant, e);
+                    "Timed out after " + timeout.toSeconds() + " seconds waiting for dropdown '"
+                        + label + "' to be enabled and contain " + expectedOption, e);
         }
     }
 
@@ -345,12 +334,10 @@ public class TeeOneAutomation {
             throw new IllegalStateException("Horario from sheet is empty");
         }
 
-        WebElement selectEl = findSelectByLabelOrName("Hora de juego");
-        if (selectEl == null) {
-            selectEl = driver.findElement(By.xpath(
-                    "//label[contains(.,'Hora de juego')]/following::select[1] | " +
-                            "//*[contains(text(),'Hora de juego')]/following::select[1]"));
-        }
+        WebElement selectEl = waitUntilDropdownReady("Hora de juego",
+            option -> !option.getText().isBlank()
+                && !"-1".equals(option.getAttribute("value")),
+            "a nonblank, non-placeholder time option");
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();

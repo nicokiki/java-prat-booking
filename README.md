@@ -44,7 +44,7 @@ cp .env.example .env
 - `GOOGLE_SHEET_ID`
 - `EMAIL_FROM`, `EMAIL_PASSWORD`, `EMAIL_TO` (and SMTP host/port/TLS as needed)
 
-**Optional (see [Optional environment variables](#optional-environment-variables)):** `SKIP_MADRID_TIME_WAIT`, `BOOKING_TARGET_DATE_OFFSET_DAYS`, `HEADLESS`, `WAIT_AFTER_RECORRIDO_MS`, `DEBUG_WAIT_AFTER_JUGADORES_MS`, etc.
+**Optional (see [Optional environment variables](#optional-environment-variables)):** `SKIP_MADRID_TIME_WAIT`, `BOOKING_TARGET_DATE_OFFSET_DAYS`, `HEADLESS`, etc.
 
 ## Build and run (local)
 
@@ -219,8 +219,8 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 | `SKIP_MADRID_TIME_WAIT` | unset → false | `true` skips the 19:59:20 / 20:00:01 Madrid waits (process env, then `.env`) |
 | `BOOKING_TARGET_DATE_OFFSET_DAYS` | `2` | `0`–`2` — days from today for sheet/URL (process env, then `.env`) |
 | `HEADLESS` | `true` | `false` shows Chrome (useful when debugging) |
-| `WAIT_AFTER_RECORRIDO_MS` | `1200` | After changing Recorrido, pause before the next control (ms) |
-| `DEBUG_WAIT_AFTER_JUGADORES_MS` | `1000` | After **Jugadores**, pause before **Hora de juego** (ms) |
+| `WAIT_AFTER_RECORRIDO_MS` | Not used | Legacy setting; readiness waits now replace the fixed inter-dropdown pause |
+| `DEBUG_WAIT_AFTER_JUGADORES_MS` | Not used | Legacy setting; Hora de juego now waits for usable options |
 | `EMAIL_DEBUG` | `false` | Jakarta Mail debug |
 | `EMAIL_TIMEOUT_MS` | `15000` | SMTP timeouts |
 
@@ -230,6 +230,28 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 2. (Unless skipped) **Wait** until the configured **Europe/Madrid** instants, then open the inscripción URL, log in, and wait for **Recorrido**.
 3. Fill **Recorrido** (with waits for options/AJAX), **Número de hoyos**, **Jugadores**, **Hora de juego**; then **BLOQUEAR**, add socios, **RESERVAR**.
 4. On success or failure, send email; include **Hora de juego** option labels if that step ran.
+
+### Form readiness and validation
+
+Each dropdown is re-found every 200 ms until it is visible, enabled, and contains
+an enabled matching option. Recorrido allows up to 25 seconds; Número de hoyos
+and Jugadores allow 15 seconds. Hora de juego allows 15 seconds for an enabled,
+nonblank option other than the `-1` placeholder, then applies the existing time
+and player-count preferences. An empty-dropdown timeout is reported separately
+from a populated list with no matching time. BLOQUEAR waits up to 15 seconds
+to become visible and enabled before a normal Selenium click.
+
+The existing post-Recorrido AJAX wait remains. These checks do not guarantee
+that an already-populated dropdown reflects the latest server response, or
+that no overlay covers BLOQUEAR. They do not retry or refresh a failed server
+availability request.
+
+Run `mvn test` for mock-only regression tests, or
+`mvn clean package assembly:single` to also build the production JAR. The
+**Validate booking automation** workflow runs this build for PRs and pushes to
+main without credentials, email, or a live booking. Future booking dispatches
+check out main and rebuild the JAR. To roll back a merged change, use the PR's
+**Revert** action and merge the resulting revert PR before the next dispatch.
 
 ## Local cron (optional)
 
