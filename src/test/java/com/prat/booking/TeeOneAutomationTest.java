@@ -5,7 +5,10 @@ import org.junit.Test;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.OutputType;
 import org.openqa.selenium.StaleElementReferenceException;
+import org.openqa.selenium.TakesScreenshot;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 
@@ -27,7 +30,7 @@ public class TeeOneAutomationTest {
     @Before
     public void setUp() throws Exception {
         automation = new TeeOneAutomation();
-        driver = mock(WebDriver.class, withSettings().extraInterfaces(JavascriptExecutor.class));
+        driver = mock(WebDriver.class, withSettings().extraInterfaces(JavascriptExecutor.class, TakesScreenshot.class));
         when(driver.findElement(any(By.class))).thenThrow(new NoSuchElementException("Missing fixture element"));
         when(((JavascriptExecutor) driver).executeScript(anyString())).thenReturn(true);
         Field driverField = TeeOneAutomation.class.getDeclaredField("driver");
@@ -163,6 +166,69 @@ public class TeeOneAutomationTest {
         invoke("selectDropdown", new Class<?>[]{String.class, String.class}, label, text);
 
         verify(dropdown, atLeast(3)).findElements(any(By.class));
+    }
+
+    @Test
+    public void capturesScreenshotOnlyAfterReservarAndSuccessDetection() throws Exception {
+        WebElement reservar = mock(WebElement.class);
+        WebElement alert = mock(WebElement.class);
+        when(alert.getText()).thenReturn("La reserva se ha realizado correctamente");
+        doReturn(reservar).when(driver).findElement(By.id("EnviarInscripcion"));
+        when(driver.findElements(any(By.class))).thenReturn(List.of(alert));
+        byte[] png = new byte[]{1, 2, 3};
+        when(((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES)).thenReturn(png);
+
+        invoke("confirmReservation", new Class<?>[]{});
+
+        org.mockito.InOrder order = inOrder(reservar, driver);
+        order.verify(reservar).click();
+        order.verify(driver).findElements(By.xpath(
+                "//div[contains(@class,'alert') and contains(@class,'alert-info') and " +
+                        "contains(normalize-space(.),'La reserva se ha realizado correctamente')]"));
+        order.verify((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
+        assertEquals(Boolean.TRUE, automation.getReservationSuccess());
+        assertArrayEquals(png, automation.getReservationScreenshot());
+        automation.getReservationScreenshot()[0] = 9;
+        assertArrayEquals(png, automation.getReservationScreenshot());
+    }
+
+    @Test
+    public void screenshotFailureDoesNotChangeBookingSuccess() throws Exception {
+        setReservationSuccess(Boolean.TRUE);
+        when(((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES))
+                .thenThrow(new WebDriverException("Screenshot unavailable"));
+
+        invoke("captureSuccessfulReservationScreenshot", new Class<?>[]{});
+
+        assertEquals(Boolean.TRUE, automation.getReservationSuccess());
+        assertNull(automation.getReservationScreenshot());
+    }
+
+    @Test
+    public void doesNotCaptureScreenshotForFailedOrUnconfirmedReservation() throws Exception {
+        invoke("captureSuccessfulReservationScreenshot", new Class<?>[]{});
+        setReservationSuccess(Boolean.FALSE);
+        invoke("captureSuccessfulReservationScreenshot", new Class<?>[]{});
+
+        verify((TakesScreenshot) driver, never()).getScreenshotAs(OutputType.BYTES);
+        assertNull(automation.getReservationScreenshot());
+    }
+
+    @Test
+    public void emptyScreenshotDoesNotChangeBookingSuccess() throws Exception {
+        setReservationSuccess(Boolean.TRUE);
+        when(((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES)).thenReturn(new byte[0]);
+
+        invoke("captureSuccessfulReservationScreenshot", new Class<?>[]{});
+
+        assertEquals(Boolean.TRUE, automation.getReservationSuccess());
+        assertNull(automation.getReservationScreenshot());
+    }
+
+    private void setReservationSuccess(Boolean success) throws Exception {
+        Field successField = TeeOneAutomation.class.getDeclaredField("reservationSuccess");
+        successField.setAccessible(true);
+        successField.set(automation, success);
     }
 
     private WebElement await(String label, Predicate<WebElement> predicate) throws Exception {

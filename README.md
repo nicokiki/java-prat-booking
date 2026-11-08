@@ -253,6 +253,22 @@ main without credentials, email, or a live booking. Future booking dispatches
 check out main and rebuild the JAR. To roll back a merged change, use the PR's
 **Revert** action and merge the resulting revert PR before the next dispatch.
 
+### Successful booking screenshot
+
+After RESERVAR has been clicked and the existing success-message check confirms
+the reservation, the automation captures the visible browser viewport as a PNG.
+The success email includes it as `booking-confirmation.png`, alongside the
+existing booking details and time-option list. No screenshot is taken before
+confirmation or for an unsuccessful reservation, so capture cannot delay
+BLOQUEAR, adding socios, or RESERVAR.
+
+Capture is best-effort: an empty image or capture exception is logged without
+changing booking success, and the email is sent without an attachment. The
+image stays in memory until email delivery; no screenshot file or Actions
+artifact is created. It shows only what is visible on the confirmation page,
+not necessarily every socio or content below the viewport. Treat the email as
+private because the screenshot may contain member and reservation details.
+
 ## Local cron (optional)
 
 To mirror production timing on your own machine (no GitHub queue), run the JAR in **`Europe/Madrid`** a few **minutes before** 20:00, e.g.:
