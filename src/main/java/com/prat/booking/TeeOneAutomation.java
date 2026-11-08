@@ -53,6 +53,8 @@ public class TeeOneAutomation {
     private String horaDeJuegoDropdownOptions;
     private byte[] reservationScreenshot;
     private ZonedDateTime reservationConfirmedAt;
+    private String selectedHoraDeJuego;
+    private String selectedRecorrido;
 
     public TeeOneAutomation() {
         // Driver is initialized later (time-based) from performBooking()
@@ -77,6 +79,8 @@ public class TeeOneAutomation {
         horaDeJuegoDropdownOptions = null;
         reservationScreenshot = null;
         reservationConfirmedAt = null;
+        selectedHoraDeJuego = null;
+        selectedRecorrido = null;
 
         ZoneId madrid = ZoneId.of("Europe/Madrid");
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
@@ -275,6 +279,9 @@ public class TeeOneAutomation {
             select = new Select(selectEl);
         }
         WebElement selected = select.getFirstSelectedOption();
+        if ("Recorrido".equalsIgnoreCase(labelOrName.trim())) {
+            selectedRecorrido = selected.getText();
+        }
         log.info("Dropdown '{}' selected: text='{}' value='{}'", labelOrName, selected.getText(), selected.getAttribute("value"));
     }
 
@@ -358,6 +365,7 @@ public class TeeOneAutomation {
         select.selectByVisibleText(best);
 
         WebElement selected = select.getFirstSelectedOption();
+        selectedHoraDeJuego = selected.getText().replaceFirst("\\s*\\(\\d+\\)\\s*$", "").trim();
         log.info("Hora de juego selected: text='{}' value='{}'", selected.getText(), selected.getAttribute("value"));
     }
 
@@ -747,6 +755,14 @@ public class TeeOneAutomation {
 
     public ZonedDateTime getReservationConfirmedAt() {
         return reservationConfirmedAt;
+    }
+
+    public String getSelectedHoraDeJuego() {
+        return selectedHoraDeJuego;
+    }
+
+    public String getSelectedRecorrido() {
+        return selectedRecorrido;
     }
 
     private void clickWithScrollAndJsFallback(WebElement el, String description) {

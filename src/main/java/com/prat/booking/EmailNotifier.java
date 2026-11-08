@@ -19,6 +19,8 @@ import java.time.ZoneId;
 import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Sends email notifications for booking results.
@@ -41,14 +43,36 @@ public class EmailNotifier {
 
     public void sendSuccess(String details, byte[] reservationScreenshot, ZonedDateTime confirmedAt,
                             LocalDate bookingDate) {
-        send(successSubject(bookingDate, confirmedAt), successBody(details, bookingDate, confirmedAt),
+        sendSuccess(details, reservationScreenshot, confirmedAt, bookingDate, null, null);
+        }
+
+        public void sendSuccess(String details, byte[] reservationScreenshot, ZonedDateTime confirmedAt,
+                    LocalDate bookingDate, String selectedHora, String recorrido) {
+        send(successSubject(bookingDate, selectedHora, recorrido, confirmedAt),
+            successBody(details, bookingDate, confirmedAt),
                 reservationScreenshot);
     }
 
     static String successSubject(LocalDate bookingDate, ZonedDateTime confirmedAt) {
-        return "TeeOne Booking: Success" + (bookingDate == null ? "" : " for " + formatDate(bookingDate))
+        return successSubject(bookingDate, null, null, confirmedAt);
+        }
+
+        static String successSubject(LocalDate bookingDate, String selectedHora, String recorrido,
+                     ZonedDateTime confirmedAt) {
+        return "TeeOne Booking -- Success" + (bookingDate == null ? "" : " -- " + formatDate(bookingDate))
+            + (selectedHora == null || selectedHora.isBlank() ? "" : " @ " + selectedHora.trim())
+            + (recorrido == null || recorrido.isBlank() ? "" : " @ " + courseColor(recorrido))
                 + (confirmedAt == null ? ""
-                : " | Confirmed at " + formatConfirmationTime(confirmedAt) + " (Madrid)");
+            : " | Booked at " + confirmedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"))
+                .format(DateTimeFormatter.ofPattern("hh:mm:ss a", Locale.ENGLISH)));
+        }
+
+        private static String courseColor(String recorrido) {
+        Matcher match = Pattern.compile("\\b(rosa|verde|amarillo)\\b", Pattern.CASE_INSENSITIVE)
+            .matcher(recorrido);
+        if (!match.find()) return recorrido.trim();
+        String color = match.group(1).toLowerCase(Locale.ROOT);
+        return Character.toUpperCase(color.charAt(0)) + color.substring(1);
     }
 
     static String successBody(String details, LocalDate bookingDate, ZonedDateTime confirmedAt) {

@@ -20,8 +20,8 @@ public class EmailNotifierTest {
         ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-11-08T07:56:10.123Z");
         LocalDate bookingDate = LocalDate.of(2026, 11, 9);
 
-        assertEquals("TeeOne Booking: Success for 09/11/2026 | Confirmed at 08:56:10:123 AM (Madrid)",
-            EmailNotifier.successSubject(bookingDate, confirmedAt));
+        assertEquals("TeeOne Booking -- Success -- 09/11/2026 @ 09:50 @ Rosa | Booked at 08:56:10 AM",
+            EmailNotifier.successSubject(bookingDate, "09:50", "TEE 1 ROSA", confirmedAt));
         assertEquals("The tee time was booked successfully.\n\n"
                 + "Booking date: 09/11/2026\n"
                 + "Booking confirmed at: 08:56:10:123 AM\n"
@@ -35,13 +35,25 @@ public class EmailNotifierTest {
         ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-07-08T18:00:05.007Z");
 
         assertTrue(EmailNotifier.successSubject(LocalDate.of(2026, 7, 10), confirmedAt)
-            .contains("Confirmed at 08:00:05:007 PM (Madrid)"));
+            .contains("Booked at 08:00:05 PM"));
         assertTrue(EmailNotifier.successBody("Details", null, confirmedAt).contains("UTC+02:00"));
     }
 
     @Test
+    public void subjectUsesOnlyCourseColorAndSelectedTime() {
+        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-11-08T08:04:45.094Z");
+        LocalDate bookingDate = LocalDate.of(2026, 11, 9);
+        for (String color : new String[]{"Rosa", "Verde", "Amarillo"}) {
+            assertEquals("TeeOne Booking -- Success -- 09/11/2026 @ 09:50 @ " + color
+                            + " | Booked at 09:04:45 AM",
+                    EmailNotifier.successSubject(bookingDate, "09:50", "TEE 1 " + color.toUpperCase(),
+                            confirmedAt));
+        }
+    }
+
+    @Test
     public void missingConfirmationTimePreservesLegacyEmailText() {
-        assertEquals("TeeOne Booking: Success", EmailNotifier.successSubject(null, null));
+        assertEquals("TeeOne Booking -- Success", EmailNotifier.successSubject(null, null));
         assertEquals("The tee time was booked successfully.\n\nDetails",
             EmailNotifier.successBody("Details", null, null));
     }
@@ -49,9 +61,9 @@ public class EmailNotifierTest {
         @Test
         public void midnightAndNoonUseCorrectAmPmAndCalendarYear() {
         LocalDate bookingDate = LocalDate.of(2027, 1, 1);
-        assertEquals("TeeOne Booking: Success for 01/01/2027 | Confirmed at 12:00:00:000 AM (Madrid)",
+        assertEquals("TeeOne Booking -- Success -- 01/01/2027 | Booked at 12:00:00 AM",
             EmailNotifier.successSubject(bookingDate, ZonedDateTime.parse("2026-12-31T23:00:00Z")));
-        assertEquals("TeeOne Booking: Success for 01/01/2027 | Confirmed at 12:00:00:999 PM (Madrid)",
+        assertEquals("TeeOne Booking -- Success -- 01/01/2027 | Booked at 12:00:00 PM",
             EmailNotifier.successSubject(bookingDate, ZonedDateTime.parse("2027-01-01T11:00:00.999Z")));
         }
 

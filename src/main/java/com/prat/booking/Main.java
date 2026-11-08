@@ -39,7 +39,8 @@ public class Main {
                     data.getRecorrido(), data.getHorario(), data.getSocios());
                 details = withHoraDeJuegoDropdownOptions(details, automation);
                 new EmailNotifier().sendSuccess(details, automation.getReservationScreenshot(),
-                    automation.getReservationConfirmedAt(), bookingDate);
+                    automation.getReservationConfirmedAt(), bookingDate,
+                    automation.getSelectedHoraDeJuego(), automation.getSelectedRecorrido());
                 log.info("Booking completed successfully");
             } else {
                 String alert = automation.getReservationAlertText();

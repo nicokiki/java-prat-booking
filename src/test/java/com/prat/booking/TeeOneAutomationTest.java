@@ -153,6 +153,17 @@ public class TeeOneAutomationTest {
         verify(bloquear, times(2)).isEnabled();
         verify(bloquear, times(1)).click();
         assertEquals("08:45 (2)", automation.getHoraDeJuegoDropdownOptions());
+        assertEquals("08:45", automation.getSelectedHoraDeJuego());
+        assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+    }
+
+    @Test
+    public void storesActualFallbackTimeWithoutPlayerCountSuffix() throws Exception {
+        doReturn(dropdown(option("08:35 (2)", "08:35"))).when(driver).findElement(By.id("HoraJuego"));
+
+        invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "8:45", 2);
+
+        assertEquals("08:35", automation.getSelectedHoraDeJuego());
     }
 
     private void assertDelayedChoice(String label, String id, String text, String value) throws Exception {
