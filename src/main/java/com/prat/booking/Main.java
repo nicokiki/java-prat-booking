@@ -32,11 +32,14 @@ public class Main {
 
             Boolean success = automation.getReservationSuccess();
             if (Boolean.TRUE.equals(success)) {
+                LocalDate bookingDate = data.getFecha() == null || data.getFecha().isBlank()
+                    ? targetDate : LocalDate.parse(data.getFecha().trim(), DateTimeFormatter.BASIC_ISO_DATE);
                 String details = String.format("Fecha: %s\nRecorrido: %s\nHorario: %s\nSocios: %d",
-                        data.getFecha(), data.getRecorrido(), data.getHorario(), data.getSocios());
+                    bookingDate.format(DateTimeFormatter.ofPattern("dd/MM/uuuu")),
+                    data.getRecorrido(), data.getHorario(), data.getSocios());
                 details = withHoraDeJuegoDropdownOptions(details, automation);
                 new EmailNotifier().sendSuccess(details, automation.getReservationScreenshot(),
-                    automation.getReservationConfirmedAt());
+                    automation.getReservationConfirmedAt(), bookingDate);
                 log.info("Booking completed successfully");
             } else {
                 String alert = automation.getReservationAlertText();

@@ -255,10 +255,12 @@ check out main and rebuild the JAR. To roll back a merged change, use the PR's
 
 ### Successful booking screenshot
 
-The success email subject and body include the confirmation date and time in
+The success email subject and body include the golf play date (`Fecha`) as
+`dd/MM/yyyy` and the confirmation time as `hh:mm:ss:SSS AM/PM` in
 `Europe/Madrid`, recorded immediately when the existing success-message check
-passes after RESERVAR, before screenshot capture or email delivery. The body
-includes the UTC offset for that date, including daylight-saving adjustments.
+passes after RESERVAR, before screenshot capture or email delivery. Milliseconds
+always have three digits. The body also includes the confirmation date and UTC
+offset, including daylight-saving adjustments.
 This is when the automation detects confirmation, not the scheduled tee time
 or a server-provided transaction timestamp.
 

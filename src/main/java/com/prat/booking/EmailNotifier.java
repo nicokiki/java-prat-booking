@@ -16,6 +16,7 @@ import jakarta.mail.util.ByteArrayDataSource;
 import java.util.Properties;
 import java.util.Locale;
 import java.time.ZoneId;
+import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -35,27 +36,40 @@ public class EmailNotifier {
     }
 
     public void sendSuccess(String details, byte[] reservationScreenshot, ZonedDateTime confirmedAt) {
-        send(successSubject(confirmedAt), successBody(details, confirmedAt), reservationScreenshot);
+        sendSuccess(details, reservationScreenshot, confirmedAt, null);
     }
 
-    static String successSubject(ZonedDateTime confirmedAt) {
-        return "TeeOne Booking: Success" + (confirmedAt == null ? ""
-                : " | Confirmed " + formatConfirmationTime(confirmedAt) + " (Madrid)");
+    public void sendSuccess(String details, byte[] reservationScreenshot, ZonedDateTime confirmedAt,
+                            LocalDate bookingDate) {
+        send(successSubject(bookingDate, confirmedAt), successBody(details, bookingDate, confirmedAt),
+                reservationScreenshot);
     }
 
-    static String successBody(String details, ZonedDateTime confirmedAt) {
-        String confirmation = "";
+    static String successSubject(LocalDate bookingDate, ZonedDateTime confirmedAt) {
+        return "TeeOne Booking: Success" + (bookingDate == null ? "" : " for " + formatDate(bookingDate))
+                + (confirmedAt == null ? ""
+                : " | Confirmed at " + formatConfirmationTime(confirmedAt) + " (Madrid)");
+    }
+
+    static String successBody(String details, LocalDate bookingDate, ZonedDateTime confirmedAt) {
+        String confirmation = bookingDate == null ? "" : "Booking date: " + formatDate(bookingDate) + "\n";
         if (confirmedAt != null) {
             ZonedDateTime madrid = confirmedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"));
-            confirmation = "Booking confirmed: " + formatConfirmationTime(madrid)
-                    + "\nTimezone: Europe/Madrid (UTC" + madrid.getOffset() + ")\n\n";
+            confirmation += "Booking confirmed at: " + formatConfirmationTime(madrid)
+                    + "\nConfirmation date: " + formatDate(madrid.toLocalDate())
+                    + "\nTimezone: Europe/Madrid (UTC" + madrid.getOffset() + ")\n";
         }
+        if (!confirmation.isEmpty()) confirmation += "\n";
         return "The tee time was booked successfully.\n\n" + confirmation + details;
+    }
+
+    private static String formatDate(LocalDate date) {
+        return date.format(DateTimeFormatter.ofPattern("dd/MM/uuuu", Locale.ENGLISH));
     }
 
     private static String formatConfirmationTime(ZonedDateTime confirmedAt) {
         return confirmedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"))
-                .format(DateTimeFormatter.ofPattern("dd MMM yyyy 'at' HH:mm:ss", Locale.ENGLISH));
+                .format(DateTimeFormatter.ofPattern("hh:mm:ss:SSS a", Locale.ENGLISH));
     }
 
     public void sendFailure(String error) {

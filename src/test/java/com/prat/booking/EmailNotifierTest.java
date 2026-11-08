@@ -10,36 +10,50 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.Properties;
 import java.time.ZonedDateTime;
+import java.time.LocalDate;
 
 import static org.junit.Assert.*;
 
 public class EmailNotifierTest {
     @Test
     public void confirmationTimeIsMadridTimeInSubjectAndBody() {
-        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-11-08T07:39:16Z");
+        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-11-08T07:56:10.123Z");
+        LocalDate bookingDate = LocalDate.of(2026, 11, 9);
 
-        assertEquals("TeeOne Booking: Success | Confirmed 08 Nov 2026 at 08:39:16 (Madrid)",
-                EmailNotifier.successSubject(confirmedAt));
+        assertEquals("TeeOne Booking: Success for 09/11/2026 | Confirmed at 08:56:10:123 AM (Madrid)",
+            EmailNotifier.successSubject(bookingDate, confirmedAt));
         assertEquals("The tee time was booked successfully.\n\n"
-                        + "Booking confirmed: 08 Nov 2026 at 08:39:16\n"
+                + "Booking date: 09/11/2026\n"
+                + "Booking confirmed at: 08:56:10:123 AM\n"
+                + "Confirmation date: 08/11/2026\n"
                         + "Timezone: Europe/Madrid (UTC+01:00)\n\nHorario: 10:00",
-                EmailNotifier.successBody("Horario: 10:00", confirmedAt));
+            EmailNotifier.successBody("Horario: 10:00", bookingDate, confirmedAt));
     }
 
     @Test
     public void confirmationTimeUsesMadridSummerOffset() {
-        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-07-08T18:00:05Z");
+        ZonedDateTime confirmedAt = ZonedDateTime.parse("2026-07-08T18:00:05.007Z");
 
-        assertTrue(EmailNotifier.successSubject(confirmedAt).contains("08 Jul 2026 at 20:00:05"));
-        assertTrue(EmailNotifier.successBody("Details", confirmedAt).contains("UTC+02:00"));
+        assertTrue(EmailNotifier.successSubject(LocalDate.of(2026, 7, 10), confirmedAt)
+            .contains("Confirmed at 08:00:05:007 PM (Madrid)"));
+        assertTrue(EmailNotifier.successBody("Details", null, confirmedAt).contains("UTC+02:00"));
     }
 
     @Test
     public void missingConfirmationTimePreservesLegacyEmailText() {
-        assertEquals("TeeOne Booking: Success", EmailNotifier.successSubject(null));
+        assertEquals("TeeOne Booking: Success", EmailNotifier.successSubject(null, null));
         assertEquals("The tee time was booked successfully.\n\nDetails",
-                EmailNotifier.successBody("Details", null));
+            EmailNotifier.successBody("Details", null, null));
     }
+
+        @Test
+        public void midnightAndNoonUseCorrectAmPmAndCalendarYear() {
+        LocalDate bookingDate = LocalDate.of(2027, 1, 1);
+        assertEquals("TeeOne Booking: Success for 01/01/2027 | Confirmed at 12:00:00:000 AM (Madrid)",
+            EmailNotifier.successSubject(bookingDate, ZonedDateTime.parse("2026-12-31T23:00:00Z")));
+        assertEquals("TeeOne Booking: Success for 01/01/2027 | Confirmed at 12:00:00:999 PM (Madrid)",
+            EmailNotifier.successSubject(bookingDate, ZonedDateTime.parse("2027-01-01T11:00:00.999Z")));
+        }
 
     @Test
     public void successScreenshotIsPngAttachmentWithOriginalDetails() throws Exception {
