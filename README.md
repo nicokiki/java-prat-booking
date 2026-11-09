@@ -241,10 +241,28 @@ and player-count preferences. An empty-dropdown timeout is reported separately
 from a populated list with no matching time. BLOQUEAR waits up to 15 seconds
 to become visible and enabled before a normal Selenium click.
 
-The existing post-Recorrido AJAX wait remains. These checks do not guarantee
+Time selection ranks the actual offered slots within **60 minutes before or
+after the sheet's Horario, inclusive**: closest first, earlier first on a tie.
+Disabled options, placeholders, and insufficient player counts are skipped;
+the existing same-time preference for plain times, then `(4)`, `(3)`, `(2)`
+(as allowed by Socios) remains. No opening time or grid is assumed, including
+for Verde.
+
+The requested course always takes priority. Only if it has no suitable time
+(including a usable dropdown remaining empty or all-disabled after the wait),
+**ROSA falls back to AMARILLO, and AMARILLO to ROSA**. The other course gets
+fresh course/hole/player selections and the same original Horario and
+60-minute window. Thus requested Rosa at 08:30 can select Rosa at 09:30 before
+considering Amarillo at 08:25. Verde has no alternate-course fallback.
+Success emails report the actual selected course and time in both subject and
+booking details. The option list is from the last course inspected.
+
+The post-Recorrido AJAX wait remains, with another wait after the player filter.
+These checks do not guarantee
 that an already-populated dropdown reflects the latest server response, or
-that no overlay covers BLOQUEAR. They do not retry or refresh a failed server
-availability request.
+that no overlay covers BLOQUEAR. Course fallback is availability-only and
+occurs before BLOQUEAR. Other errors and failures or uncertain results during
+BLOQUEAR or RESERVAR do not trigger another course or reservation attempt.
 
 Run `mvn test` for mock-only regression tests, or
 `mvn clean package assembly:single` to also build the production JAR. The

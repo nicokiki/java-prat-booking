@@ -25,7 +25,6 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Predicate;
@@ -214,12 +213,25 @@ public class TeeOneAutomation {
     private void fillBookingForm(BookingData data) {
         log.info("Filling booking form: Recorrido={}, Horario={}, Socios={}", data.getRecorrido(), data.getHorario(), data.getSocios());
 
-        selectDropdown("Recorrido", data.getRecorrido());
-        selectDropdown("Número de hoyos", "18");
-        selectDropdown("Jugadores", String.valueOf(data.getSocios()));
-        selectHoraDeJuego(data.getHorario(), data.getSocios());
+        try {
+            selectCourseAndTime(data, data.getRecorrido());
+        } catch (NoSuitableTeeTimeException unavailable) {
+            String alternate = alternateRecorrido(data.getRecorrido());
+            if (alternate == null) {
+                throw unavailable;
+            }
+            log.warn("No suitable time on '{}'; trying '{}' within 60 minutes of '{}'",
+                    data.getRecorrido(), alternate, data.getHorario());
+            try {
+                selectCourseAndTime(data, alternate);
+            } catch (NoSuitableTeeTimeException alternateUnavailable) {
+                alternateUnavailable.addSuppressed(unavailable);
+                throw alternateUnavailable;
+            }
+        }
 
-        log.info("Already selected recorrido: {}, players: {} and horario: {} ... About to click on bloquear button", data.getRecorrido(), data.getSocios(), data.getHorario());
+        log.info("Already selected recorrido: {}, players: {} and horario: {} ... About to click on bloquear button",
+                selectedRecorrido, data.getSocios(), selectedHoraDeJuego);
 
         By bloquearLocator = By.xpath(
             "//button[@id='BtnBloquear'] | " +
@@ -235,6 +247,25 @@ public class TeeOneAutomation {
         log.info("Clicked on bloquear button successfully id={} class={}",
             bloquearId, bloquearClass);
         sleep(Duration.ofSeconds(2)); // Page reloads after BLOQUEAR
+    }
+
+    private void selectCourseAndTime(BookingData data, String recorrido) {
+        selectedHoraDeJuego = null;
+        horaDeJuegoDropdownOptions = null;
+        selectDropdown("Recorrido", recorrido);
+        selectDropdown("Número de hoyos", "18");
+        selectDropdown("Jugadores", String.valueOf(data.getSocios()));
+        waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT);
+        selectHoraDeJuego(data.getHorario(), data.getSocios());
+    }
+
+    private String alternateRecorrido(String recorrido) {
+        Matcher color = Pattern.compile("\\b(ROSA|AMARILLO)\\b", Pattern.CASE_INSENSITIVE)
+                .matcher(recorrido);
+        if (!color.find()) {
+            return null;
+        }
+        return color.replaceFirst("ROSA".equalsIgnoreCase(color.group(1)) ? "AMARILLO" : "ROSA");
     }
 
     private void selectDropdown(String labelOrName, String value) {
@@ -324,7 +355,7 @@ public class TeeOneAutomation {
             new WebDriverWait(driver, maxWait).pollingEvery(Duration.ofMillis(200))
                     .until(d -> Boolean.TRUE.equals(((JavascriptExecutor) d).executeScript(
                             "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }")));
-            log.info("jQuery AJAX idle after Recorrido change");
+            log.info("jQuery AJAX idle after filter change");
         } catch (TimeoutException e) {
             log.warn("jQuery.active did not return to 0 within {} — continuing", maxWait);
         }
@@ -347,10 +378,23 @@ public class TeeOneAutomation {
             throw new IllegalStateException("Horario from sheet is empty");
         }
 
-        WebElement selectEl = waitUntilDropdownReady("Hora de juego",
-            option -> !option.getText().isBlank()
-                && !"-1".equals(option.getAttribute("value")),
-            "a nonblank, non-placeholder time option");
+        WebElement selectEl;
+        try {
+            selectEl = waitUntilDropdownReady("Hora de juego",
+                    option -> !option.getText().isBlank()
+                            && !"-1".equals(option.getAttribute("value")),
+                    "a nonblank, non-placeholder time option");
+        } catch (IllegalStateException e) {
+            WebElement dropdown = findSelectByLabelOrName("Hora de juego");
+            if (e.getCause() instanceof TimeoutException && dropdown != null
+                    && dropdown.isDisplayed() && dropdown.isEnabled()
+                    && new Select(dropdown).getOptions().stream().allMatch(option ->
+                        !option.isEnabled() || option.getText().isBlank()
+                            || "-1".equals(option.getAttribute("value")))) {
+                throw new NoSuitableTeeTimeException(e.getMessage(), e);
+            }
+            throw e;
+        }
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
@@ -374,7 +418,8 @@ public class TeeOneAutomation {
         if (parsed == null) {
             // fallback: exact match by text if we can't parse
             for (WebElement opt : options) {
-                if (normalize(opt.getText()).equalsIgnoreCase(normalize(sheetHorario))) {
+                if (opt.isEnabled() && !"-1".equals(opt.getAttribute("value"))
+                        && normalize(opt.getText()).equalsIgnoreCase(normalize(sheetHorario))) {
                     return opt.getText();
                 }
             }
@@ -382,49 +427,64 @@ public class TeeOneAutomation {
         }
 
         List<Integer> preferredNs = allowedSuffixesForSocios(socios);
-
-        // Keep a 1:1 mapping of visible text -> original option text to avoid index mismatches.
-        List<String> optionTexts = new ArrayList<>();
-        List<String> optionOriginals = new ArrayList<>();
+        Pattern timeLabel = Pattern.compile("^(\\d{1,2}:\\d{2})(?: \\((\\d+)\\))?$");
+        String best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        int bestMinutes = Integer.MAX_VALUE;
+        int bestPreference = Integer.MAX_VALUE;
         for (WebElement opt : options) {
+            if (!opt.isEnabled() || "-1".equals(opt.getAttribute("value"))) {
+                continue;
+            }
             String original = opt.getText();
-            String t = normalize(original);
-            if (!t.isBlank()) {
-                optionTexts.add(t);
-                optionOriginals.add(original);
+            Matcher label = timeLabel.matcher(normalize(original));
+            if (!label.matches()) {
+                continue;
+            }
+            ParsedHorario offered = ParsedHorario.parse(label.group(1));
+            if (offered == null) {
+                continue;
+            }
+            int preference = 0;
+            if (label.group(2) != null) {
+                String capacity = label.group(2);
+                preference = -1;
+                for (int index = 0; index < preferredNs.size(); index++) {
+                    if (String.valueOf(preferredNs.get(index)).equals(capacity)) {
+                        preference = index + 1;
+                        break;
+                    }
+                }
+                if (preference < 0) {
+                    continue;
+                }
+            }
+            int distance = Math.abs(offered.minutes - parsed.minutes);
+            if (distance > 60) {
+                continue;
+            }
+            if (distance < bestDistance
+                    || (distance == bestDistance && offered.minutes < bestMinutes)
+                    || (distance == bestDistance && offered.minutes == bestMinutes
+                            && preference < bestPreference)) {
+                best = original;
+                bestDistance = distance;
+                bestMinutes = offered.minutes;
+                bestPreference = preference;
             }
         }
-
-        int baseMinutes = parsed.minutes;
-        // Order required by you:
-        // exact, then -10, then +10, then -20, then +20 (max ±20)
-        int[] orderedMinuteOffsets = new int[]{0, -10, 10, -20, 20};
-        for (int offset : orderedMinuteOffsets) {
-            int m = baseMinutes + offset;
-            if (m < 0 || m >= 24 * 60) continue;
-            String hhmm = formatMinutes(m);
-
-            // If the dropdown provides a plain HH:mm option, it is the most exact match.
-            String plain = hhmm;
-            int idx = indexOfIgnoreCase(optionTexts, plain);
-            if (idx >= 0) return optionOriginals.get(idx);
-
-            // Otherwise match HH:mm (N) respecting socios-based preference order.
-            for (Integer n : preferredNs) {
-                String candidate = hhmm + " (" + n + ")";
-                int idx2 = indexOfIgnoreCase(optionTexts, candidate);
-                if (idx2 >= 0) return optionOriginals.get(idx2);
-            }
+        if (best != null) {
+            return best;
         }
 
-        throw new NoSuchElementException("No Hora de juego option found close to '" + sheetHorario + "' within ±20 minutes");
+        throw new NoSuitableTeeTimeException(
+                "No Hora de juego option found close to '" + sheetHorario + "' within +/-60 minutes", null);
     }
 
-    private int indexOfIgnoreCase(List<String> list, String needle) {
-        for (int i = 0; i < list.size(); i++) {
-            if (list.get(i).equalsIgnoreCase(needle)) return i;
+    private static class NoSuitableTeeTimeException extends NoSuchElementException {
+        NoSuitableTeeTimeException(String message, Throwable cause) {
+            super(message, cause);
         }
-        return -1;
     }
 
     private List<Integer> allowedSuffixesForSocios(int socios) {
@@ -435,12 +495,6 @@ public class TeeOneAutomation {
         if (socios >= 4) return List.of(4);
         if (socios == 3) return List.of(4, 3);
         return List.of(4, 3, 2);
-    }
-
-    private String formatMinutes(int minutes) {
-        int h = minutes / 60;
-        int m = minutes % 60;
-        return String.format("%02d:%02d", h, m);
     }
 
     private String normalize(String s) {

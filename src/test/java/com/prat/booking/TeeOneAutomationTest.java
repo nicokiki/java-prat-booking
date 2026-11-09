@@ -16,6 +16,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
 import static org.junit.Assert.*;
@@ -85,7 +87,7 @@ public class TeeOneAutomationTest {
         try {
             invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "8:45", 2);
             fail("Expected timeout for an empty time dropdown");
-        } catch (IllegalStateException expected) {
+        } catch (NoSuchElementException expected) {
             assertTrue(expected.getMessage().contains("Timed out after 15 seconds"));
             assertTrue(expected.getMessage().contains("Hora de juego"));
             assertTrue(expected.getMessage().contains("non-placeholder time option"));
@@ -121,6 +123,165 @@ public class TeeOneAutomationTest {
                 option("08:45 (3)", "exact3"))));
         assertEquals("08:35 (2)", bestTime(List.of(
                 option("08:55 (4)", "later"), option("08:35 (2)", "earlier"))));
+    }
+
+    @Test
+    public void ranksRosaAndAmarilloSchedulesWithinSixtyMinutes() throws Exception {
+        assertRankedTimes("8:30", "08:30", "08:20", "08:40", "08:10", "08:50", "08:00",
+                "09:00", "09:10", "09:20", "09:30");
+        assertRankedTimes("8:30", "08:25", "08:35", "08:15", "08:45", "08:05", "08:55",
+                "09:05", "09:15", "09:25");
+        assertRankedTimes("8:35", "08:30", "08:40", "08:20", "08:50", "08:10", "09:00",
+                "08:00", "09:10", "09:20", "09:30");
+        assertRankedTimes("8:35", "08:35", "08:25", "08:45", "08:15", "08:55", "08:05",
+                "09:05", "09:15", "09:25", "09:35");
+        assertRankedTimes("8:00", "08:00", "08:10", "08:20", "08:30", "08:40", "08:50", "09:00");
+        assertRankedTimes("8:00", "08:05", "08:15", "08:25", "08:35", "08:45", "08:55");
+    }
+
+    @Test
+    public void windowIsInclusiveAndCapacityAndDisabledOptionsAreRespected() throws Exception {
+        WebElement disabled = option("09:00 (4)", "disabled");
+        when(disabled.isEnabled()).thenReturn(false);
+        List<WebElement> options = List.of(disabled, option("09:00 (1)", "too-small"),
+                option("07:59 (4)", "too-early"), option("10:01 (4)", "too-late"),
+                option("10:00 (4)", "later-boundary"), option("08:00 (2)", "earlier-boundary"));
+        assertEquals("08:00 (2)", pickTime("9:00", 2, options));
+        assertEquals("10:00 (4)", pickTime("9:00", 3, options));
+        assertEquals("08:25 (4)", pickTime("8:30", 2, List.of(
+                option("08:35 (4)", "later"), option("08:25 (2)", "two"),
+                option("08:25 (4)", "four"))));
+    }
+
+    @Test
+    public void ranksOffGridTimesWithoutAssumingVerdeSchedule() throws Exception {
+        assertRankedTimes("8:30", "08:27", "08:34", "08:21");
+        assertRankedTimes("8:30", "8:25", "08:35");
+        assertRankedTimes("0:10", "00:00", "01:10");
+        assertRankedTimes("23:00", "23:59");
+        assertNull(invoke("alternateRecorrido", new Class<?>[]{String.class}, "TEE 1 VERDE"));
+    }
+
+    @Test
+    public void dropdownDriverFailureDoesNotTryAnotherCourse() throws Exception {
+        WebElement brokenOption = option("08:30 (4)", "08:30");
+        when(brokenOption.getText()).thenThrow(new WebDriverException("Time options failed"));
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(brokenOption),
+                "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
+
+        try {
+            fillForm("TEE 1 ROSA", "8:30");
+            fail("Expected driver failure");
+        } catch (WebDriverException expected) {
+            assertTrue(expected.getMessage().contains("Time options failed"));
+        }
+
+        assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
+        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(bloquear, never()).click();
+    }
+
+    @Test
+    public void fallsBackFromRosaToAmarilloBeforeBlocking() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:00 (4)", "10:00")),
+                "TEE 1 AMARILLO", dropdown(option("08:25 (2)", "08:25")));
+
+        fillForm("TEE 1 ROSA", "8:30");
+
+        assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+        assertEquals("08:25", automation.getSelectedHoraDeJuego());
+        verify(bloquear, times(1)).click();
+        verify(driver, times(2)).findElement(By.id("Hoyos"));
+        verify(driver, times(2)).findElement(By.id("Plazas"));
+    }
+
+    @Test
+    public void fallsBackFromAmarilloToRosaBeforeBlocking() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 AMARILLO", dropdown(option("10:00 (4)", "10:00")),
+                "TEE 1 ROSA", dropdown(option("08:30 (2)", "08:30")));
+
+        fillForm("TEE 1 AMARILLO", "8:30");
+
+        assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
+        assertEquals("08:30", automation.getSelectedHoraDeJuego());
+        verify(bloquear, times(1)).click();
+    }
+
+    @Test
+    public void requestedCourseTakesPriorityOverCloserAlternateTime() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("09:30 (2)", "09:30")),
+                "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
+
+        fillForm("TEE 1 ROSA", "8:30");
+
+        assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
+        assertEquals("09:30", automation.getSelectedHoraDeJuego());
+        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(bloquear, times(1)).click();
+    }
+
+    @Test
+    public void neitherCourseAvailableDoesNotBlockOrReserve() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:00 (4)", "10:00")),
+                "TEE 1 AMARILLO", dropdown(option("10:05 (4)", "10:05")));
+
+        try {
+            fillForm("TEE 1 ROSA", "8:30");
+            fail("Expected no availability on either course");
+        } catch (NoSuchElementException expected) {
+            assertTrue(expected.getMessage().contains("+/-60 minutes"));
+            assertEquals(1, expected.getSuppressed().length);
+        }
+
+        verify(bloquear, never()).click();
+        verify(driver, never()).findElement(By.id("EnviarInscripcion"));
+        assertNull(automation.getSelectedHoraDeJuego());
+    }
+
+    @Test(timeout = 30000)
+    public void emptyRequestedCourseFallsBackAfterReadinessTimeout() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("", "-1")),
+                "TEE 1 AMARILLO", dropdown(option("08:25 (2)", "08:25")));
+
+        fillForm("TEE 1 ROSA", "8:30");
+
+        assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+        verify(bloquear, times(1)).click();
+    }
+
+    @Test
+    public void blockingFailureDoesNotTryAnotherCourse() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("08:30 (4)", "08:30")),
+                "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
+        doThrow(new WebDriverException("Blocking failed")).when(bloquear).click();
+
+        try {
+            fillForm("TEE 1 ROSA", "8:30");
+            fail("Expected blocking failure");
+        } catch (WebDriverException expected) {
+            assertTrue(expected.getMessage().contains("Blocking failed"));
+        }
+
+        assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
+        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(bloquear, times(1)).click();
+    }
+
+    @Test
+    public void invalidHorarioDoesNotTryAnotherCourse() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("08:30 (4)", "08:30")),
+                "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
+
+        try {
+            fillForm("TEE 1 ROSA", "invalid");
+            fail("Expected invalid sheet time failure");
+        } catch (NoSuchElementException expected) {
+            assertTrue(expected.getMessage().contains("Could not parse Horario"));
+        }
+
+        assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
+        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(bloquear, never()).click();
     }
 
     @Test
@@ -269,8 +430,60 @@ public class TeeOneAutomationTest {
     }
 
     private String bestTime(List<WebElement> options) throws Exception {
+        return pickTime("8:45", 2, options);
+    }
+
+    private String pickTime(String requested, int socios, List<WebElement> options) throws Exception {
         return (String) invoke("pickBestHoraOptionText",
-                new Class<?>[]{String.class, int.class, List.class}, "8:45", 2, options);
+                new Class<?>[]{String.class, int.class, List.class}, requested, socios, options);
+    }
+
+    private void assertRankedTimes(String requested, String... expected) throws Exception {
+        List<WebElement> remaining = new ArrayList<>();
+        for (String time : expected) {
+            remaining.add(0, option(time, time));
+        }
+        for (String time : expected) {
+            String selected = pickTime(requested, 2, remaining);
+            assertEquals(time, selected);
+            remaining.removeIf(candidate -> selected.equals(candidate.getText()));
+        }
+    }
+
+    private void fillForm(String recorrido, String horario) throws Exception {
+        invoke("fillBookingForm", new Class<?>[]{BookingData.class},
+                new BookingData("20261111", recorrido, horario, 2, List.of()));
+    }
+
+    private WebElement configureCourses(String primary, WebElement primaryTimes,
+                                         String alternate, WebElement alternateTimes) {
+        AtomicReference<String> selectedCourse = new AtomicReference<>("");
+        WebElement primaryOption = courseOption(primary, "0", selectedCourse);
+        WebElement alternateOption = courseOption(alternate, "1", selectedCourse);
+        doReturn(dropdown(primaryOption, alternateOption)).when(driver).findElement(By.id("Recorrido"));
+        doReturn(dropdown(option("18", "1"))).when(driver).findElement(By.id("Hoyos"));
+        doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
+        doAnswer(invocation -> primary.equals(selectedCourse.get()) ? primaryTimes : alternateTimes)
+                .when(driver).findElement(By.id("HoraJuego"));
+        WebElement bloquear = mock(WebElement.class);
+        when(bloquear.isDisplayed()).thenReturn(true);
+        when(bloquear.isEnabled()).thenReturn(true);
+        doReturn(bloquear).when(driver).findElement(By.xpath(
+                "//button[@id='BtnBloquear'] | " +
+                        "//button[.//span[normalize-space()='BLOQUEAR']] | " +
+                        "//button[contains(.,'BLOQUEAR')]"));
+        return bloquear;
+    }
+
+    private WebElement courseOption(String label, String index, AtomicReference<String> selectedCourse) {
+        WebElement course = option(label, label);
+        when(course.getAttribute("index")).thenReturn(index);
+        when(course.isSelected()).thenAnswer(invocation -> label.equals(selectedCourse.get()));
+        doAnswer(invocation -> {
+            selectedCourse.set(label);
+            return null;
+        }).when(course).click();
+        return course;
     }
 
     private Object invoke(String name, Class<?>[] types, Object... arguments) throws Exception {

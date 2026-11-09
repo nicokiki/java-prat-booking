@@ -36,7 +36,7 @@ public class Main {
                     ? targetDate : LocalDate.parse(data.getFecha().trim(), DateTimeFormatter.BASIC_ISO_DATE);
                 String details = String.format("Fecha: %s\nRecorrido: %s\nHorario: %s\nSocios: %d",
                     bookingDate.format(DateTimeFormatter.ofPattern("dd/MM/uuuu")),
-                    data.getRecorrido(), data.getHorario(), data.getSocios());
+                    automation.getSelectedRecorrido(), automation.getSelectedHoraDeJuego(), data.getSocios());
                 details = withHoraDeJuegoDropdownOptions(details, automation);
                 new EmailNotifier().sendSuccess(details, automation.getReservationScreenshot(),
                     automation.getReservationConfirmedAt(), bookingDate,
