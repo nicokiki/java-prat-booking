@@ -4,6 +4,64 @@ Automated tee time booking for [TeeOne](https://members.teeone.golf) (Prat). It 
 
 You can run it **locally** (Java + Chrome) or on **GitHub Actions** (externally scheduled or manual).
 
+## Components and services
+
+This diagram shows the GitHub Actions booking path. Solid arrows show
+execution or service calls; dotted arrows show credential and configuration
+inputs. Local runs use the same Java application and external services,
+without cron-job.org or a GitHub runner.
+
+<!-- mermaid-checked: no \n, no em-dash/en-dash, no {} in labels, subgraphs are id["label"], arrows are -->|"label"|, all subgraphs closed by end, ids unique -->
+```mermaid
+flowchart TD
+  Cron["cron-job.org<br/>Stores restricted GitHub token"]
+  Manual["Manual Run workflow"]
+  subgraph GitHub["GitHub"]
+    API["GitHub API"]
+    Workflow["Booking Actions workflow"]
+    Repo["Repository main branch"]
+    Secrets["Actions repository secrets"]
+  end
+  subgraph Runner["GitHub-hosted Ubuntu runner"]
+    Build["Java 17 and Maven build"]
+    Config["Runtime .env and service-account JSON"]
+    App["Java booking application"]
+    Selenium["Selenium"]
+    Driver["ChromeDriver"]
+    Chrome["Headless Google Chrome"]
+  end
+  SheetsAPI["Google Sheets API"]
+  Sheet[("Google Sheet booking preferences")]
+  TeeOne["TeeOne members website"]
+  Gmail["Gmail SMTP or configured SMTP server"]
+  Inbox["Recipient inbox"]
+
+  Cron -->|"Daily dispatch around 19:00 Madrid"| API
+  API -->|"workflow_dispatch"| Workflow
+  Manual --> Workflow
+  Workflow -->|"Prepare runner and build"| Build
+  Repo -->|"Checkout source"| Build
+  Build -->|"Run fat JAR"| App
+  Secrets -.->|"Inject credentials"| Config
+  Config -.->|"TeeOne, Google and SMTP settings"| App
+  App -->|"Read using service-account credentials"| SheetsAPI
+  SheetsAPI -->|"Read target-date row"| Sheet
+  App -->|"Automate booking"| Selenium
+  Selenium --> Driver
+  Driver --> Chrome
+  Chrome -->|"HTTPS login and reservation"| TeeOne
+  App -->|"Result email and success screenshot"| Gmail
+  Workflow -->|"Late-start alert if cutoff fails"| Gmail
+  Gmail -->|"Deliver email"| Inbox
+```
+
+- **Scheduling:** cron-job.org must be configured separately. It stores a restricted GitHub token and dispatches the workflow; it does not run Java or hold the TeeOne, Google, or SMTP credentials. See [External scheduling](#external-scheduling-with-cron-joborg).
+- **Execution:** Actions checks the booking cutoff, waits for the build window, checks out `main`, installs Java and Chrome, builds the JAR, and starts the app. The Java app handles the final Madrid-time waits and course/time selection.
+- **Secrets:** repository secrets supply the TeeOne login, Google service-account JSON and sheet settings, and SMTP credentials and recipients. The workflow writes runtime `.env` and JSON files on the runner; secret values do not belong in source control or this diagram.
+- **Google Sheets:** the Java app reads booking preferences through the Sheets API using the service account. The sheet must be shared with that service account.
+- **Browser:** Selenium controls ChromeDriver, which drives headless Chrome against TeeOne. The booking itself uses the website, not the Sheets API or email.
+- **Email:** the app sends success/failure details through Gmail SMTP by default, or another configured SMTP server. A confirmed success includes a screenshot when capture succeeds. The workflow can separately send a late-start alert before the app runs.
+
 ## Requirements
 
 - **Java 17+** (Maven; set `JAVA_HOME` if needed)
