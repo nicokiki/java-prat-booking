@@ -79,7 +79,7 @@ public class TeeOneAutomationTest {
         verify(dropdown, times(2)).isEnabled();
     }
 
-    @Test(timeout = 30000)
+    @Test(timeout = 6000)
     public void emptyTimeDropdownFailsWithReadinessTimeout() throws Exception {
         WebElement dropdown = dropdown(option("", "-1"));
         doReturn(dropdown).when(driver).findElement(By.id("HoraJuego"));
@@ -88,7 +88,7 @@ public class TeeOneAutomationTest {
             invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "8:45", 2);
             fail("Expected timeout for an empty time dropdown");
         } catch (NoSuchElementException expected) {
-            assertTrue(expected.getMessage().contains("Timed out after 15 seconds"));
+            assertTrue(expected.getMessage().contains("Timed out after 3 seconds"));
             assertTrue(expected.getMessage().contains("Hora de juego"));
             assertTrue(expected.getMessage().contains("non-placeholder time option"));
         }
@@ -238,7 +238,7 @@ public class TeeOneAutomationTest {
         assertNull(automation.getSelectedHoraDeJuego());
     }
 
-    @Test(timeout = 30000)
+    @Test(timeout = 12000)
     public void emptyRequestedCourseFallsBackAfterReadinessTimeout() throws Exception {
         WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("", "-1")),
                 "TEE 1 AMARILLO", dropdown(option("08:25 (2)", "08:25")));

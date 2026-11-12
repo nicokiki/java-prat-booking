@@ -318,8 +318,12 @@ public class TeeOneAutomation {
 
     private WebElement waitUntilDropdownReady(String label, Predicate<WebElement> optionReady,
                                               String expectedOption) {
-        Duration timeout = "Recorrido".equalsIgnoreCase(label.trim())
-                ? Duration.ofSeconds(25) : DEFAULT_TIMEOUT;
+        Duration timeout = DEFAULT_TIMEOUT;
+        if ("Recorrido".equalsIgnoreCase(label.trim())) {
+            timeout = Duration.ofSeconds(25);
+        } else if ("Hora de juego".equalsIgnoreCase(label.trim())) {
+            timeout = Duration.ofSeconds(3);
+        }
         log.info("Waiting for dropdown '{}' to be enabled and contain {}...", label, expectedOption);
         try {
             return new WebDriverWait(driver, timeout)

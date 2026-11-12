@@ -327,11 +327,15 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 
 Each dropdown is re-found every 200 ms until it is visible, enabled, and contains
 an enabled matching option. Recorrido allows up to 25 seconds; Número de hoyos
-and Jugadores allow 15 seconds. Hora de juego allows 15 seconds for an enabled,
+and Jugadores allow 15 seconds. Hora de juego allows 3 seconds for an enabled,
 nonblank option other than the `-1` placeholder, then applies the existing time
 and player-count preferences. An empty-dropdown timeout is reported separately
 from a populated list with no matching time. BLOQUEAR waits up to 15 seconds
 to become visible and enabled before a normal Selenium click.
+
+The three-second time-dropdown limit applies on each course. It speeds up
+fallback from an empty list, but a preferred course whose times arrive later
+than that limit may be skipped. The separate AJAX waits are unchanged.
 
 Time selection ranks the actual offered slots within **60 minutes before or
 after the sheet's Horario, inclusive**: closest first, earlier first on a tie.
