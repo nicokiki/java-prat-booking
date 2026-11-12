@@ -24,7 +24,7 @@ public class EmailNotifierTest {
             EmailNotifier.successSubject(bookingDate, "09:50", "TEE 1 ROSA", confirmedAt));
         assertEquals("The tee time was booked successfully.\n\n"
                 + "Booking date: 09/11/2026\n"
-                + "Booking confirmed at: 08:56:10:123 AM\n"
+                + "Booked at: 08:56:10:123 AM\n"
                 + "Confirmation date: 08/11/2026\n"
                         + "Timezone: Europe/Madrid (UTC+01:00)\n\nHorario: 10:00",
             EmailNotifier.successBody("Horario: 10:00", bookingDate, confirmedAt));
@@ -37,6 +37,48 @@ public class EmailNotifierTest {
         assertTrue(EmailNotifier.successSubject(LocalDate.of(2026, 7, 10), confirmedAt)
             .contains("Booked at 08:00:05 PM"));
         assertTrue(EmailNotifier.successBody("Details", null, confirmedAt).contains("UTC+02:00"));
+    }
+
+    @Test
+    public void blockedAndBookedTimesAreDistinctInSubjectAndBody() {
+        ZonedDateTime blockedAt = ZonedDateTime.parse("2026-11-11T19:00:20.055Z");
+        ZonedDateTime bookedAt = ZonedDateTime.parse("2026-11-11T19:00:23.001Z");
+        LocalDate bookingDate = LocalDate.of(2026, 11, 13);
+
+        assertEquals("TeeOne Booking -- Success -- 13/11/2026 @ 09:05 @ Amarillo"
+                        + " | Blocked at 08:00:20 PM | Booked at 08:00:23 PM",
+                EmailNotifier.successSubject(bookingDate, "09:05", "TEE 1 AMARILLO", bookedAt, blockedAt));
+        assertEquals("The tee time was booked successfully.\n\n"
+                        + "Booking date: 13/11/2026\n"
+                        + "Blocked at: 08:00:20:055 PM\nBlock date: 11/11/2026\n"
+                        + "Booked at: 08:00:23:001 PM\nConfirmation date: 11/11/2026\n"
+                        + "Timezone: Europe/Madrid (UTC+01:00)\n\nDetails",
+                EmailNotifier.successBody("Details", bookingDate, bookedAt, blockedAt));
+    }
+
+    @Test
+    public void bothTimestampsUseMadridSummerTime() {
+        ZonedDateTime blockedAt = ZonedDateTime.parse("2026-07-08T18:00:01.007Z");
+        ZonedDateTime bookedAt = ZonedDateTime.parse("2026-07-08T18:00:05.123Z");
+
+        assertTrue(EmailNotifier.successSubject(null, null, null, bookedAt, blockedAt)
+                .contains("Blocked at 08:00:01 PM | Booked at 08:00:05 PM"));
+        String body = EmailNotifier.successBody("Details", null, bookedAt, blockedAt);
+        assertTrue(body.contains("Blocked at: 08:00:01:007 PM"));
+        assertTrue(body.contains("Booked at: 08:00:05:123 PM"));
+        assertTrue(body.contains("UTC+02:00"));
+    }
+
+    @Test
+    public void blockedTimestampDoesNotInventMissingBookingTime() {
+        ZonedDateTime blockedAt = ZonedDateTime.parse("2026-11-11T19:00:20.055Z");
+
+        assertEquals("TeeOne Booking -- Success | Blocked at 08:00:20 PM",
+                EmailNotifier.successSubject(null, null, null, null, blockedAt));
+        String body = EmailNotifier.successBody("Details", null, null, blockedAt);
+        assertTrue(body.contains("Blocked at: 08:00:20:055 PM"));
+        assertTrue(body.contains("UTC+01:00"));
+        assertFalse(body.contains("Booked at:"));
     }
 
     @Test

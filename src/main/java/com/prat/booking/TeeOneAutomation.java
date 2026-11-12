@@ -51,6 +51,7 @@ public class TeeOneAutomation {
     /** Visible labels from the Hora de juego dropdown after it is read; used in notification emails. */
     private String horaDeJuegoDropdownOptions;
     private byte[] reservationScreenshot;
+    private ZonedDateTime reservationBlockedAt;
     private ZonedDateTime reservationConfirmedAt;
     private String selectedHoraDeJuego;
     private String selectedRecorrido;
@@ -77,6 +78,7 @@ public class TeeOneAutomation {
         reservationAlertText = null;
         horaDeJuegoDropdownOptions = null;
         reservationScreenshot = null;
+        reservationBlockedAt = null;
         reservationConfirmedAt = null;
         selectedHoraDeJuego = null;
         selectedRecorrido = null;
@@ -243,7 +245,9 @@ public class TeeOneAutomation {
         String bloquearId = bloquearBtn.getAttribute("id");
         String bloquearClass = bloquearBtn.getAttribute("class");
 
+        ZonedDateTime blockedAt = ZonedDateTime.now(ZoneId.of("Europe/Madrid"));
         bloquearBtn.click();
+        reservationBlockedAt = blockedAt;
         log.info("Clicked on bloquear button successfully id={} class={}",
             bloquearId, bloquearClass);
         sleep(Duration.ofSeconds(2)); // Page reloads after BLOQUEAR
@@ -813,6 +817,10 @@ public class TeeOneAutomation {
 
     public ZonedDateTime getReservationConfirmedAt() {
         return reservationConfirmedAt;
+    }
+
+    public ZonedDateTime getReservationBlockedAt() {
+        return reservationBlockedAt;
     }
 
     public String getSelectedHoraDeJuego() {

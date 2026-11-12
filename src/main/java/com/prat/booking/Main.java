@@ -40,7 +40,8 @@ public class Main {
                 details = withHoraDeJuegoDropdownOptions(details, automation);
                 new EmailNotifier().sendSuccess(details, automation.getReservationScreenshot(),
                     automation.getReservationConfirmedAt(), bookingDate,
-                    automation.getSelectedHoraDeJuego(), automation.getSelectedRecorrido());
+                    automation.getSelectedHoraDeJuego(), automation.getSelectedRecorrido(),
+                    automation.getReservationBlockedAt());
                 log.info("Booking completed successfully");
             } else {
                 String alert = automation.getReservationAlertText();

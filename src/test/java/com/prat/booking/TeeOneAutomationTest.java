@@ -15,6 +15,8 @@ import org.openqa.selenium.WebElement;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -236,6 +238,7 @@ public class TeeOneAutomationTest {
         verify(bloquear, never()).click();
         verify(driver, never()).findElement(By.id("EnviarInscripcion"));
         assertNull(automation.getSelectedHoraDeJuego());
+        assertNull(automation.getReservationBlockedAt());
     }
 
     @Test(timeout = 12000)
@@ -247,6 +250,7 @@ public class TeeOneAutomationTest {
 
         assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
         verify(bloquear, times(1)).click();
+        assertNotNull(automation.getReservationBlockedAt());
     }
 
     @Test
@@ -262,6 +266,7 @@ public class TeeOneAutomationTest {
             assertTrue(expected.getMessage().contains("Blocking failed"));
         }
 
+        assertNull(automation.getReservationBlockedAt());
         assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
         verify(driver, times(1)).findElement(By.id("HoraJuego"));
         verify(bloquear, times(1)).click();
@@ -303,6 +308,12 @@ public class TeeOneAutomationTest {
         WebElement bloquear = mock(WebElement.class);
         when(bloquear.isDisplayed()).thenReturn(true);
         when(bloquear.isEnabled()).thenReturn(false, true);
+        AtomicReference<Instant> clickStarted = new AtomicReference<>();
+        doAnswer(invocation -> {
+            clickStarted.set(Instant.now());
+            assertNull(automation.getReservationBlockedAt());
+            return null;
+        }).when(bloquear).click();
         doReturn(bloquear).when(driver).findElement(By.xpath(
                 "//button[@id='BtnBloquear'] | " +
                 "//button[.//span[normalize-space()='BLOQUEAR']] | " +
@@ -316,6 +327,29 @@ public class TeeOneAutomationTest {
         assertEquals("08:45 (2)", automation.getHoraDeJuegoDropdownOptions());
         assertEquals("08:45", automation.getSelectedHoraDeJuego());
         assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+        assertNotNull(automation.getReservationBlockedAt());
+        assertEquals("Europe/Madrid", automation.getReservationBlockedAt().getZone().getId());
+        assertFalse(automation.getReservationBlockedAt().toInstant().isAfter(clickStarted.get()));
+        assertNull(automation.getReservationConfirmedAt());
+    }
+
+    @Test
+    public void newBookingClearsPreviousBlockedTimestampBeforeReadingDate() throws Exception {
+        Field blocked = TeeOneAutomation.class.getDeclaredField("reservationBlockedAt");
+        blocked.setAccessible(true);
+        blocked.set(automation, ZonedDateTime.parse("2026-11-11T19:00:20Z"));
+        BookingData data = mock(BookingData.class);
+        when(data.getFecha()).thenThrow(new IllegalArgumentException("Invalid booking date"));
+
+        try {
+            automation.performBooking(data);
+            fail("Expected date failure before browser navigation");
+        } catch (IllegalArgumentException expected) {
+            assertEquals("Invalid booking date", expected.getMessage());
+        }
+
+        assertNull(automation.getReservationBlockedAt());
+        verify(driver, never()).get(anyString());
     }
 
     @Test

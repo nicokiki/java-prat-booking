@@ -48,8 +48,14 @@ public class EmailNotifier {
 
         public void sendSuccess(String details, byte[] reservationScreenshot, ZonedDateTime confirmedAt,
                     LocalDate bookingDate, String selectedHora, String recorrido) {
-        send(successSubject(bookingDate, selectedHora, recorrido, confirmedAt),
-            successBody(details, bookingDate, confirmedAt),
+        sendSuccess(details, reservationScreenshot, confirmedAt, bookingDate, selectedHora, recorrido, null);
+    }
+
+    public void sendSuccess(String details, byte[] reservationScreenshot, ZonedDateTime confirmedAt,
+                            LocalDate bookingDate, String selectedHora, String recorrido,
+                            ZonedDateTime blockedAt) {
+        send(successSubject(bookingDate, selectedHora, recorrido, confirmedAt, blockedAt),
+            successBody(details, bookingDate, confirmedAt, blockedAt),
                 reservationScreenshot);
     }
 
@@ -59,9 +65,17 @@ public class EmailNotifier {
 
         static String successSubject(LocalDate bookingDate, String selectedHora, String recorrido,
                      ZonedDateTime confirmedAt) {
+        return successSubject(bookingDate, selectedHora, recorrido, confirmedAt, null);
+    }
+
+    static String successSubject(LocalDate bookingDate, String selectedHora, String recorrido,
+                                 ZonedDateTime confirmedAt, ZonedDateTime blockedAt) {
         return "TeeOne Booking -- Success" + (bookingDate == null ? "" : " -- " + formatDate(bookingDate))
             + (selectedHora == null || selectedHora.isBlank() ? "" : " @ " + selectedHora.trim())
             + (recorrido == null || recorrido.isBlank() ? "" : " @ " + courseColor(recorrido))
+            + (blockedAt == null ? ""
+                : " | Blocked at " + blockedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"))
+                    .format(DateTimeFormatter.ofPattern("hh:mm:ss a", Locale.ENGLISH)))
                 + (confirmedAt == null ? ""
             : " | Booked at " + confirmedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"))
                 .format(DateTimeFormatter.ofPattern("hh:mm:ss a", Locale.ENGLISH)));
@@ -76,12 +90,25 @@ public class EmailNotifier {
     }
 
     static String successBody(String details, LocalDate bookingDate, ZonedDateTime confirmedAt) {
+        return successBody(details, bookingDate, confirmedAt, null);
+    }
+
+    static String successBody(String details, LocalDate bookingDate, ZonedDateTime confirmedAt,
+                              ZonedDateTime blockedAt) {
         String confirmation = bookingDate == null ? "" : "Booking date: " + formatDate(bookingDate) + "\n";
+        if (blockedAt != null) {
+            ZonedDateTime madrid = blockedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"));
+            confirmation += "Blocked at: " + formatConfirmationTime(madrid)
+                    + "\nBlock date: " + formatDate(madrid.toLocalDate()) + "\n";
+        }
         if (confirmedAt != null) {
             ZonedDateTime madrid = confirmedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"));
-            confirmation += "Booking confirmed at: " + formatConfirmationTime(madrid)
+            confirmation += "Booked at: " + formatConfirmationTime(madrid)
                     + "\nConfirmation date: " + formatDate(madrid.toLocalDate())
                     + "\nTimezone: Europe/Madrid (UTC" + madrid.getOffset() + ")\n";
+        } else if (blockedAt != null) {
+            ZonedDateTime madrid = blockedAt.withZoneSameInstant(ZoneId.of("Europe/Madrid"));
+            confirmation += "Timezone: Europe/Madrid (UTC" + madrid.getOffset() + ")\n";
         }
         if (!confirmation.isEmpty()) confirmation += "\n";
         return "The tee time was booked successfully.\n\n" + confirmation + details;
