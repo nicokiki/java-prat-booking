@@ -367,6 +367,26 @@ main without credentials, email, or a live booking. Future booking dispatches
 check out main and rebuild the JAR. To roll back a merged change, use the PR's
 **Revert** action and merge the resulting revert PR before the next dispatch.
 
+### Socio readiness
+
+After BLOQUEAR, each additional socio is looked up by the **exact licence**
+from the sheet, not a partial licence match. The app polls every 200 ms for
+up to five seconds for a visible popup, then up to five seconds for the
+matching row and a visible, enabled plus icon. Rows are re-found on each poll
+to tolerate asynchronous loading and table replacement; there is no fixed
+two-second pause after opening the popup.
+
+After the plus click, the app waits up to five seconds for new selected-member
+evidence in the booking form matching the row's licence, member ID, or visible
+name. Popup closure alone is not considered proof of addition. If this update
+cannot be verified, or the requested row never becomes ready, the run stops
+before RESERVAR and sends the failure email. Timeout logs include popup
+visibility and licence-row counts without dumping the page or credentials.
+An uncertain click failure does not trigger another click, course switch,
+or reservation attempt; the JavaScript click fallback is only used for an
+intercepted click. An incorrect or unavailable licence still needs correction
+in the sheet or TeeOne friends list.
+
 ### Successful booking screenshot
 
 The success email subject uses the format

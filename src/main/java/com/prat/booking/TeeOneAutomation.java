@@ -9,6 +9,7 @@ import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
@@ -673,6 +674,10 @@ public class TeeOneAutomation {
         }
 
         for (String socioName : sociosToAdd) {
+            String key = socioName == null ? "" : socioName.trim();
+            if (key.isEmpty()) {
+                throw new IllegalStateException("Socio licence from sheet is empty");
+            }
             log.info("Adding socio: {} to the booking form", socioName);
             // Text is inside a nested <span>, so avoid contains(text(),...) and prefer the stable container id.
             WebElement addBtn = wait.until(ExpectedConditions.elementToBeClickable(By.xpath(
@@ -681,38 +686,18 @@ public class TeeOneAutomation {
                     "//button[contains(.,'Añadir a otro socio')]"
             )));
             clickWithScrollAndJsFallback(addBtn, "Añadir a otro socio");
-            sleep(Duration.ofSeconds(2));
 
             // Popup HTML:
             // <div id="popup-amigo"> ... <div id="table-amigo"><table> <tr data-licencia="..." data-nombre="..."> ... </tr>
             // Clicking the <tr> triggers addAmigoModal(this)
-            new WebDriverWait(driver, Duration.ofSeconds(3))
+                new WebDriverWait(driver, Duration.ofSeconds(5))
+                    .pollingEvery(Duration.ofMillis(200))
+                    .ignoring(StaleElementReferenceException.class)
                     .until(ExpectedConditions.visibilityOfElementLocated(By.id("popup-amigo")));
 
-            String key = socioName == null ? "" : socioName.trim();
             log.info("Popup-amigo is visible ... about to find the socio row ... looking for {} ...", key);
 
-            if (key.isEmpty()) {
-                throw new IllegalStateException("Socio name from sheet is empty");
-            }
-
-            WebElement row = null;
-            // Only match by data-licencia (license), as provided in the Google Sheet.
-            List<By> locators = List.of(
-                    By.xpath("//div[@id='popup-amigo']//tr[contains(@onclick,'addAmigoModal') and @data-licencia=\"" + key + "\"]"),
-                    By.xpath("//div[@id='popup-amigo']//tr[contains(@onclick,'addAmigoModal') and contains(@data-licencia, \"" + key + "\")]")
-            );
-
-            for (By by : locators) {
-                List<WebElement> matches = driver.findElements(by);
-                if (!matches.isEmpty()) {
-                    row = matches.get(0);
-                    break;
-                }
-            }
-            if (row == null) {
-                throw new NoSuchElementException("Could not find socio by data-licencia in popup-amigo: " + key);
-            }
+            WebElement row = waitForSocioRow(key);
 
             log.info("Found socio row: data-nombre='{}' data-licencia='{}' data-idsocio='{}'",
                     row.getAttribute("data-nombre"), row.getAttribute("data-licencia"), row.getAttribute("data-idsocio"));
@@ -723,12 +708,11 @@ public class TeeOneAutomation {
                 throw new NoSuchElementException("Found socio row but could not find plus icon (<i>) for data-licencia=" + key);
             }
 
+            String memberId = row.getAttribute("data-idsocio");
+            String memberName = row.getAttribute("data-nombre");
+            long beforeAddition = selectedSocioEvidence(key, memberId, memberName);
             log.info("Clicking plus icon for socio data-licencia={}", key);
-            try {
-                plusIcon.click();
-            } catch (Exception clickErr) {
-                ((JavascriptExecutor) driver).executeScript("arguments[0].click();", plusIcon);
-            }
+            clickWithScrollAndJsFallback(plusIcon, "Add selected socio");
             // After adding, the popup often closes. Ensure we don't get stuck behind the modal/overlay.
             try {
                 new WebDriverWait(driver, Duration.ofSeconds(2))
@@ -745,10 +729,88 @@ public class TeeOneAutomation {
                     // best effort
                 }
             }
-            sleep(Duration.ofMillis(300));
+            waitForSocioAdded(key, memberId, memberName, beforeAddition);
         }
         log.info("Added all socios to the booking form ... ready to confirm the reservation");
 
+    }
+
+    private WebElement waitForSocioRow(String licence) {
+        try {
+            return new WebDriverWait(driver, Duration.ofSeconds(5))
+                    .pollingEvery(Duration.ofMillis(200))
+                    .ignoring(StaleElementReferenceException.class)
+                    .until(currentDriver -> {
+                        List<WebElement> rows = currentDriver.findElements(By.cssSelector(
+                                "#popup-amigo tr[data-licencia][onclick*='addAmigoModal']"));
+                        for (WebElement row : rows) {
+                            if (!licence.equals(row.getAttribute("data-licencia")) || !row.isDisplayed()) {
+                                continue;
+                            }
+                            WebElement plus = row.findElement(By.xpath(
+                                    ".//i[contains(@class,'fa-plus-circle')] | .//td[contains(@class,'right')]//i"));
+                            if (plus.isDisplayed() && plus.isEnabled()) {
+                                return row;
+                            }
+                        }
+                        return null;
+                    });
+        } catch (TimeoutException timeout) {
+            logSocioDiagnostics("waiting for licence row and plus icon");
+            throw new NoSuchElementException(
+                    "Timed out after 5 seconds waiting for a visible socio row and clickable plus icon "
+                            + "in popup-amigo for data-licencia: " + licence, timeout);
+        }
+    }
+
+    private long selectedSocioEvidence(String licence, String memberId, String memberName) {
+        Object result = ((JavascriptExecutor) driver).executeScript("""
+                const licence = arguments[0], memberId = arguments[1], memberName = arguments[2];
+                const normalize = value => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                return Array.from(document.querySelectorAll(
+                    'form input, form select, form [data-licencia], form [data-idsocio], form span, form td, '
+                    + '#AmigosSocios input, #AmigosSocios select, #AmigosSocios [data-licencia], '
+                    + '#AmigosSocios [data-idsocio], #AmigosSocios span, #AmigosSocios td, #AmigosSocios li'
+                )).filter(element => !element.closest('#popup-amigo') && (
+                    element.getAttribute('data-licencia') === licence
+                    || (memberId && element.getAttribute('data-idsocio') === memberId)
+                    || ((element.tagName === 'INPUT' || element.tagName === 'SELECT')
+                        && (element.value === licence || (memberId && element.value === memberId)))
+                    || (memberName && element.childElementCount === 0
+                        && element.getClientRects().length > 0
+                        && normalize(element.textContent) === normalize(memberName))
+                )).length;
+                """, licence, memberId, memberName);
+        if (!(result instanceof Number count)) {
+            throw new IllegalStateException("Could not inspect selected-socio form state");
+        }
+        return count.longValue();
+    }
+
+    private void waitForSocioAdded(String licence, String memberId, String memberName, long beforeAddition) {
+        try {
+            new WebDriverWait(driver, Duration.ofSeconds(5))
+                    .pollingEvery(Duration.ofMillis(200))
+                    .ignoring(StaleElementReferenceException.class)
+                    .until(currentDriver -> selectedSocioEvidence(licence, memberId, memberName) > beforeAddition);
+            log.info("Verified selected-socio form update before reservation");
+        } catch (TimeoutException timeout) {
+            logSocioDiagnostics("verifying selected-socio form update");
+            throw new IllegalStateException(
+                    "Timed out after 5 seconds verifying socio was added for data-licencia: " + licence
+                            + "; reservation will not be submitted", timeout);
+        }
+    }
+
+    private void logSocioDiagnostics(String stage) {
+        try {
+            List<WebElement> popups = driver.findElements(By.id("popup-amigo"));
+            boolean visible = !popups.isEmpty() && popups.get(0).isDisplayed();
+            int rows = driver.findElements(By.cssSelector("#popup-amigo tr[data-licencia]")).size();
+            log.warn("Socio timeout while {}: popup visible={}, licence rows={}", stage, visible, rows);
+        } catch (WebDriverException diagnosticsError) {
+            log.warn("Could not collect socio timeout diagnostics: {}", diagnosticsError.getClass().getSimpleName());
+        }
     }
 
     private void confirmReservation() {

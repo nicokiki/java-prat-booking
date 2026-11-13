@@ -16,7 +16,9 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Instant;
+import java.time.Duration;
 import java.time.ZonedDateTime;
+import org.openqa.selenium.support.ui.WebDriverWait;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -456,6 +458,168 @@ public class TeeOneAutomationTest {
         Field successField = TeeOneAutomation.class.getDeclaredField("reservationSuccess");
         successField.setAccessible(true);
         successField.set(automation, success);
+    }
+
+    @Test
+    public void socioRowWaitsForDelayedRowsAndEnabledPlusIcon() throws Exception {
+        WebElement row = mock(WebElement.class);
+        WebElement plus = mock(WebElement.class);
+        when(row.getAttribute("data-licencia")).thenReturn("TEST123");
+        when(row.isDisplayed()).thenReturn(true);
+        when(row.findElement(any(By.class))).thenReturn(plus);
+        when(plus.isDisplayed()).thenReturn(true);
+        when(plus.isEnabled()).thenReturn(false).thenReturn(true);
+        when(driver.findElements(By.cssSelector(
+                "#popup-amigo tr[data-licencia][onclick*='addAmigoModal']")))
+                .thenReturn(List.of()).thenReturn(List.of(row));
+
+        assertSame(row, invoke("waitForSocioRow", new Class<?>[]{String.class}, "TEST123"));
+
+        verify(plus, times(2)).isEnabled();
+        verify(plus, never()).click();
+    }
+
+    @Test
+    public void socioAdditionWaitsForNewFormEvidence() throws Exception {
+        JavascriptExecutor javascript = (JavascriptExecutor) driver;
+        when(javascript.executeScript(anyString(), eq("TEST123"), eq("42"), eq("Test Member")))
+                .thenReturn(0L).thenReturn(1L);
+
+        invoke("waitForSocioAdded", new Class<?>[]{String.class, String.class, String.class, long.class},
+                "TEST123", "42", "Test Member", 0L);
+
+        verify(javascript, times(2)).executeScript(anyString(), eq("TEST123"), eq("42"), eq("Test Member"));
+    }
+
+    @Test
+    public void socioRowWaitsThroughStaleRowsAndMissingIcons() throws Exception {
+        WebElement stale = mock(WebElement.class);
+        when(stale.getAttribute("data-licencia")).thenThrow(new StaleElementReferenceException("Replaced row"));
+        WebElement row = mock(WebElement.class);
+        WebElement plus = mock(WebElement.class);
+        when(row.getAttribute("data-licencia")).thenReturn("TEST123");
+        when(row.isDisplayed()).thenReturn(true);
+        when(row.findElement(any(By.class))).thenThrow(new NoSuchElementException("Loading icon"))
+                .thenReturn(plus);
+        when(plus.isDisplayed()).thenReturn(false).thenReturn(true);
+        when(plus.isEnabled()).thenReturn(true);
+        when(driver.findElements(By.cssSelector(
+                "#popup-amigo tr[data-licencia][onclick*='addAmigoModal']")))
+                .thenReturn(List.of(stale)).thenReturn(List.of(row));
+
+        assertSame(row, invoke("waitForSocioRow", new Class<?>[]{String.class}, "TEST123"));
+
+        verify(plus, never()).click();
+    }
+
+    @Test(timeout = 8000)
+    public void missingLicenceTimesOutWithoutSelectingPartialMatch() throws Exception {
+        WebElement wrongRow = mock(WebElement.class);
+        when(wrongRow.getAttribute("data-licencia")).thenReturn("TEST1234");
+        when(driver.findElements(By.cssSelector(
+                "#popup-amigo tr[data-licencia][onclick*='addAmigoModal']")))
+                .thenReturn(List.of(wrongRow));
+
+        try {
+            invoke("waitForSocioRow", new Class<?>[]{String.class}, "TEST123");
+            fail("Expected missing exact licence to time out");
+        } catch (NoSuchElementException expected) {
+            assertTrue(expected.getMessage().contains("Timed out after 5 seconds"));
+            assertTrue(expected.getMessage().contains("TEST123"));
+        }
+
+        verify(wrongRow, never()).findElement(any(By.class));
+        verify(wrongRow, never()).click();
+    }
+
+    @Test
+    public void addsSocioOnceAndVerifiesTheFormUpdate() throws Exception {
+        WebElement plus = configureSocioPopup(true);
+
+        invoke("addSocios", new Class<?>[]{BookingData.class},
+                new BookingData("20261114", "TEE 1 AMARILLO", "11:15", 2, List.of("TEST123")));
+
+        verify(plus, times(1)).click();
+        verify((JavascriptExecutor) driver, times(2)).executeScript(
+                anyString(), eq("TEST123"), eq("42"), eq("Test Member"));
+    }
+
+    @Test(timeout = 10000)
+    public void unverifiedSocioAdditionFailsWithoutClickingAgainOrReserving() throws Exception {
+        WebElement plus = configureSocioPopup(false);
+
+        try {
+            invoke("addSocios", new Class<?>[]{BookingData.class},
+                    new BookingData("20261114", "TEE 1 AMARILLO", "11:15", 2, List.of("TEST123")));
+            fail("Expected unverified addition to prevent reservation");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("Timed out after 5 seconds verifying socio was added"));
+            assertTrue(expected.getMessage().contains("reservation will not be submitted"));
+        }
+
+        verify(plus, times(1)).click();
+        verify(driver, never()).findElement(By.id("EnviarInscripcion"));
+    }
+
+    @Test
+    public void uncertainPlusClickDoesNotUseJavascriptRetry() throws Exception {
+        WebElement plus = configureSocioPopup(true);
+        doThrow(new WebDriverException("Unknown click outcome")).when(plus).click();
+
+        try {
+            invoke("addSocios", new Class<?>[]{BookingData.class},
+                    new BookingData("20261114", "TEE 1 AMARILLO", "11:15", 2, List.of("TEST123")));
+            fail("Expected uncertain click to stop the run");
+        } catch (WebDriverException expected) {
+            assertTrue(expected.getMessage().contains("Unknown click outcome"));
+        }
+
+        verify(plus, times(1)).click();
+        verify((JavascriptExecutor) driver, never()).executeScript(eq("arguments[0].click();"), eq(plus));
+        verify(driver, never()).findElement(By.id("EnviarInscripcion"));
+    }
+
+    private WebElement configureSocioPopup(boolean updateForm) throws Exception {
+        Field waitField = TeeOneAutomation.class.getDeclaredField("wait");
+        waitField.setAccessible(true);
+        waitField.set(automation, new WebDriverWait(driver, Duration.ofSeconds(5)));
+        AtomicReference<Boolean> visible = new AtomicReference<>(false);
+        AtomicReference<Boolean> selected = new AtomicReference<>(false);
+        WebElement popup = mock(WebElement.class);
+        when(popup.isDisplayed()).thenAnswer(invocation -> visible.get());
+        doReturn(popup).when(driver).findElement(By.id("popup-amigo"));
+        when(driver.findElements(By.id("popup-amigo"))).thenReturn(List.of(popup));
+        WebElement addButton = mock(WebElement.class);
+        when(addButton.isDisplayed()).thenReturn(true);
+        when(addButton.isEnabled()).thenReturn(true);
+        doAnswer(invocation -> {
+            visible.set(true);
+            return null;
+        }).when(addButton).click();
+        doReturn(addButton).when(driver).findElement(By.xpath(
+                "//div[@id='AmigosSocios']//button | " +
+                        "//button[.//span[contains(normalize-space(),'Añadir a otro socio')]] | " +
+                        "//button[contains(.,'Añadir a otro socio')]"));
+        WebElement row = mock(WebElement.class);
+        when(row.getAttribute("data-licencia")).thenReturn("TEST123");
+        when(row.getAttribute("data-idsocio")).thenReturn("42");
+        when(row.getAttribute("data-nombre")).thenReturn("Test Member");
+        when(row.isDisplayed()).thenReturn(true);
+        WebElement plus = mock(WebElement.class);
+        when(plus.isDisplayed()).thenReturn(true);
+        when(plus.isEnabled()).thenReturn(true);
+        when(row.findElement(any(By.class))).thenReturn(plus);
+        when(driver.findElements(By.cssSelector(
+                "#popup-amigo tr[data-licencia][onclick*='addAmigoModal']"))).thenReturn(List.of(row));
+        doAnswer(invocation -> {
+            visible.set(false);
+            selected.set(updateForm);
+            return null;
+        }).when(plus).click();
+        when(((JavascriptExecutor) driver).executeScript(
+                anyString(), eq("TEST123"), eq("42"), eq("Test Member")))
+                .thenAnswer(invocation -> selected.get() ? 1L : 0L);
+        return plus;
     }
 
     private WebElement await(String label, Predicate<WebElement> predicate) throws Exception {
