@@ -130,17 +130,19 @@ public class TeeOneAutomationTest {
     }
 
     @Test
-    public void ranksRosaAndAmarilloSchedulesWithinSixtyMinutes() throws Exception {
+        public void ranksRosaAndAmarilloSchedulesWithinNinetyMinutes() throws Exception {
         assertRankedTimes("8:30", "08:30", "08:20", "08:40", "08:10", "08:50", "08:00",
-                "09:00", "09:10", "09:20", "09:30");
+            "09:00", "09:10", "09:20", "09:30", "09:40", "09:50", "10:00");
         assertRankedTimes("8:30", "08:25", "08:35", "08:15", "08:45", "08:05", "08:55",
-                "09:05", "09:15", "09:25");
+            "09:05", "09:15", "09:25", "09:35", "09:45", "09:55");
         assertRankedTimes("8:35", "08:30", "08:40", "08:20", "08:50", "08:10", "09:00",
                 "08:00", "09:10", "09:20", "09:30");
         assertRankedTimes("8:35", "08:35", "08:25", "08:45", "08:15", "08:55", "08:05",
                 "09:05", "09:15", "09:25", "09:35");
-        assertRankedTimes("8:00", "08:00", "08:10", "08:20", "08:30", "08:40", "08:50", "09:00");
-        assertRankedTimes("8:00", "08:05", "08:15", "08:25", "08:35", "08:45", "08:55");
+        assertRankedTimes("8:00", "08:00", "08:10", "08:20", "08:30", "08:40", "08:50", "09:00",
+            "09:10", "09:20", "09:30");
+        assertRankedTimes("8:00", "08:05", "08:15", "08:25", "08:35", "08:45", "08:55",
+            "09:05", "09:15", "09:25");
     }
 
     @Test
@@ -148,10 +150,18 @@ public class TeeOneAutomationTest {
         WebElement disabled = option("09:00 (4)", "disabled");
         when(disabled.isEnabled()).thenReturn(false);
         List<WebElement> options = List.of(disabled, option("09:00 (1)", "too-small"),
-                option("07:59 (4)", "too-early"), option("10:01 (4)", "too-late"),
-                option("10:00 (4)", "later-boundary"), option("08:00 (2)", "earlier-boundary"));
-        assertEquals("08:00 (2)", pickTime("9:00", 2, options));
-        assertEquals("10:00 (4)", pickTime("9:00", 3, options));
+                option("07:29 (4)", "too-early"), option("10:31 (4)", "too-late"),
+                option("10:30 (4)", "later-boundary"), option("07:30 (2)", "earlier-boundary"));
+            assertEquals("07:30 (2)", pickTime("9:00", 2, options));
+            assertEquals("10:30 (4)", pickTime("9:00", 3, options));
+            for (String outside : List.of("07:29", "10:31")) {
+                try {
+                    pickTime("9:00", 2, List.of(option(outside + " (4)", outside)));
+                    fail("Expected a slot 91 minutes away to be rejected: " + outside);
+                } catch (NoSuchElementException expected) {
+                    assertTrue(expected.getMessage().contains("+/-90 minutes"));
+                }
+            }
         assertEquals("08:25 (4)", pickTime("8:30", 2, List.of(
                 option("08:35 (4)", "later"), option("08:25 (2)", "two"),
                 option("08:25 (4)", "four"))));
@@ -187,7 +197,7 @@ public class TeeOneAutomationTest {
 
     @Test
     public void fallsBackFromRosaToAmarilloBeforeBlocking() throws Exception {
-        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:00 (4)", "10:00")),
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:05 (4)", "10:05")),
                 "TEE 1 AMARILLO", dropdown(option("08:25 (2)", "08:25")));
 
         fillForm("TEE 1 ROSA", "8:30");
@@ -201,7 +211,7 @@ public class TeeOneAutomationTest {
 
     @Test
     public void fallsBackFromAmarilloToRosaBeforeBlocking() throws Exception {
-        WebElement bloquear = configureCourses("TEE 1 AMARILLO", dropdown(option("10:00 (4)", "10:00")),
+        WebElement bloquear = configureCourses("TEE 1 AMARILLO", dropdown(option("10:05 (4)", "10:05")),
                 "TEE 1 ROSA", dropdown(option("08:30 (2)", "08:30")));
 
         fillForm("TEE 1 AMARILLO", "8:30");
@@ -213,27 +223,27 @@ public class TeeOneAutomationTest {
 
     @Test
     public void requestedCourseTakesPriorityOverCloserAlternateTime() throws Exception {
-        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("09:30 (2)", "09:30")),
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:00 (2)", "10:00")),
                 "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
 
         fillForm("TEE 1 ROSA", "8:30");
 
         assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
-        assertEquals("09:30", automation.getSelectedHoraDeJuego());
+        assertEquals("10:00", automation.getSelectedHoraDeJuego());
         verify(driver, times(1)).findElement(By.id("HoraJuego"));
         verify(bloquear, times(1)).click();
     }
 
     @Test
     public void neitherCourseAvailableDoesNotBlockOrReserve() throws Exception {
-        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:00 (4)", "10:00")),
-                "TEE 1 AMARILLO", dropdown(option("10:05 (4)", "10:05")));
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("10:05 (4)", "10:05")),
+            "TEE 1 AMARILLO", dropdown(option("10:15 (4)", "10:15")));
 
         try {
             fillForm("TEE 1 ROSA", "8:30");
             fail("Expected no availability on either course");
         } catch (NoSuchElementException expected) {
-            assertTrue(expected.getMessage().contains("+/-60 minutes"));
+            assertTrue(expected.getMessage().contains("+/-90 minutes"));
             assertEquals(1, expected.getSuppressed().length);
         }
 
@@ -294,7 +304,7 @@ public class TeeOneAutomationTest {
     @Test
     public void populatedTimesWithoutMatchStillFail() throws Exception {
         try {
-            bestTime(List.of(option("10:00 (4)", "outside-window")));
+            bestTime(List.of(option("10:16 (4)", "outside-window")));
             fail("Expected no matching time");
         } catch (NoSuchElementException expected) {
             assertTrue(expected.getMessage().contains("No Hora de juego option"));

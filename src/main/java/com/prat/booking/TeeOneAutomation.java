@@ -41,6 +41,7 @@ public class TeeOneAutomation {
     private static final String BASE_URL = "https://members.teeone.golf/prat/reservas/inscripcion/";
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration PAGE_LOAD_WAIT = Duration.ofSeconds(3);
+    private static final int MAX_TEE_TIME_DISTANCE_MINUTES = 90;
 
     private WebDriver driver;
     private WebDriverWait wait;
@@ -223,8 +224,8 @@ public class TeeOneAutomation {
             if (alternate == null) {
                 throw unavailable;
             }
-            log.warn("No suitable time on '{}'; trying '{}' within 60 minutes of '{}'",
-                    data.getRecorrido(), alternate, data.getHorario());
+                log.warn("No suitable time on '{}'; trying '{}' within {} minutes of '{}'",
+                    data.getRecorrido(), alternate, MAX_TEE_TIME_DISTANCE_MINUTES, data.getHorario());
             try {
                 selectCourseAndTime(data, alternate);
             } catch (NoSuitableTeeTimeException alternateUnavailable) {
@@ -469,7 +470,7 @@ public class TeeOneAutomation {
                 }
             }
             int distance = Math.abs(offered.minutes - parsed.minutes);
-            if (distance > 60) {
+            if (distance > MAX_TEE_TIME_DISTANCE_MINUTES) {
                 continue;
             }
             if (distance < bestDistance
@@ -487,7 +488,8 @@ public class TeeOneAutomation {
         }
 
         throw new NoSuitableTeeTimeException(
-                "No Hora de juego option found close to '" + sheetHorario + "' within +/-60 minutes", null);
+                "No Hora de juego option found close to '" + sheetHorario + "' within +/-"
+                    + MAX_TEE_TIME_DISTANCE_MINUTES + " minutes", null);
     }
 
     private static class NoSuitableTeeTimeException extends NoSuchElementException {

@@ -87,7 +87,7 @@ actual socios to add. Empty cells stay empty, not `...` or `N/A`.
 
 - **Fecha**: play date in `yyyyMMdd`, not the day the automation runs. The app selects the row for the **target date** (see [Target date](#target-date) below). For example, a run on 9 November 2026 with the default two-day offset selects `20261111`.
 - **Recorrido**: preferred course, using the dropdown label, such as `TEE 1 ROSA` or `TEE 1 AMARILLO`. Rosa and Amarillo automatically fall back to each other if the preferred course has no suitable time. Verde has no alternate-course fallback.
-- **Horario**: preferred tee time in `HH:mm` or `H:mm`, for example `08:30` or `8:30`. It is a preference, not an exact-time requirement: the app accepts offered times within **60 minutes before or after it, inclusive**. Keep the displayed cell value in this format, without seconds or AM/PM.
+- **Horario**: preferred tee time in `HH:mm` or `H:mm`, for example `08:30` or `8:30`. It is a preference, not an exact-time requirement: the app accepts offered times within **90 minutes before or after it, inclusive**. Keep the displayed cell value in this format, without seconds or AM/PM.
 - **Socios**: total player count selected in the form. A time must have enough places for that count.
 - **Socio-1**, **Socio-2**, **Socio-3**: member numbers for additional players when **Añadir a otro socio** is used. For two players, fill `Socio-1`; for three, also fill `Socio-2`; for four, fill all three. The logged-in player is already included in the total.
 
@@ -99,20 +99,20 @@ automatic from the single preferred course and time.
 
 For `20261111,TEE 1 ROSA,08:30,2,100001,,`:
 
-1. Select Rosa, 18 holes, and two players. Consider only actual offered times in **07:30 through 09:30**, inclusive, skipping disabled options, placeholders, and insufficient places.
-2. Choose the closest eligible Rosa time; earlier wins an equal-distance tie. With Rosa's 08:00 start and ten-minute grid, the order is `08:30`, `08:20`, `08:40`, `08:10`, `08:50`, `08:00`, `09:00`, `09:10`, `09:20`, `09:30`, considering only those actually offered and eligible.
-3. Only if Rosa has no eligible time, switch to Amarillo with fresh filters and the **same original 08:30 preference and 07:30-09:30 window**. With Amarillo's 08:05 start and ten-minute grid, the order is `08:25`, `08:35`, `08:15`, `08:45`, `08:05`, `08:55`, `09:05`, `09:15`, `09:25`, again considering only eligible offered times.
+1. Select Rosa, 18 holes, and two players. Consider only actual offered times in **07:00 through 10:00**, inclusive, skipping disabled options, placeholders, and insufficient places.
+2. Choose the closest eligible Rosa time; earlier wins an equal-distance tie. With Rosa's 08:00 start and ten-minute grid, the order is `08:30`, `08:20`, `08:40`, `08:10`, `08:50`, `08:00`, `09:00`, `09:10`, `09:20`, `09:30`, `09:40`, `09:50`, `10:00`, considering only those actually offered and eligible.
+3. Only if Rosa has no eligible time, switch to Amarillo with fresh filters and the **same original 08:30 preference and 07:00-10:00 window**. With Amarillo's 08:05 start and ten-minute grid, the order is `08:25`, `08:35`, `08:15`, `08:45`, `08:05`, `08:55`, `09:05`, `09:15`, `09:25`, `09:35`, `09:45`, `09:55`, again considering only eligible offered times.
 4. Reserve the selected slot. If neither course has a suitable time, report failure without clicking BLOQUEAR. A failure during BLOQUEAR or RESERVAR does **not** trigger another course or reservation attempt.
 
-**Course preference comes before time proximity:** an available Rosa 09:30
+**Course preference comes before time proximity:** an available Rosa 10:00
 is selected ahead of Amarillo 08:25. If Rosa has no suitable slot and Amarillo
 08:25 is selected, the success email reports **Amarillo at 08:25**, not the
 requested Rosa at 08:30. Emails also include the time options from the last
 course inspected when that list was read.
 
 For the second row, the same rules run in reverse: Amarillo first, then Rosa
-only if needed, within **07:35-09:35**. For the Verde row, only Verde's actual
-offered times within **08:00-10:00** are considered; no Verde start time or
+only if needed, within **07:05-10:05**. For the Verde row, only Verde's actual
+offered times within **07:30-10:30** are considered; no Verde start time or
 ten-minute grid is assumed.
 
 ### Service account
@@ -337,7 +337,7 @@ The three-second time-dropdown limit applies on each course. It speeds up
 fallback from an empty list, but a preferred course whose times arrive later
 than that limit may be skipped. The separate AJAX waits are unchanged.
 
-Time selection ranks the actual offered slots within **60 minutes before or
+Time selection ranks the actual offered slots within **90 minutes before or
 after the sheet's Horario, inclusive**: closest first, earlier first on a tie.
 Disabled options, placeholders, and insufficient player counts are skipped;
 the existing same-time preference for plain times, then `(4)`, `(3)`, `(2)`
@@ -348,7 +348,7 @@ The requested course always takes priority. Only if it has no suitable time
 (including a usable dropdown remaining empty or all-disabled after the wait),
 **ROSA falls back to AMARILLO, and AMARILLO to ROSA**. The other course gets
 fresh course/hole/player selections and the same original Horario and
-60-minute window. Thus requested Rosa at 08:30 can select Rosa at 09:30 before
+90-minute window. Thus requested Rosa at 08:30 can select Rosa at 10:00 before
 considering Amarillo at 08:25. Verde has no alternate-course fallback.
 Success emails report the actual selected course and time in both subject and
 booking details. The option list is from the last course inspected.
