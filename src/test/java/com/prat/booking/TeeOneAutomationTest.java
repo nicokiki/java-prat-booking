@@ -492,6 +492,24 @@ public class TeeOneAutomationTest {
     }
 
     @Test
+    public void socioEvidenceChecksTeeOneMemberModelAndPlayerTable() throws Exception {
+        when(((JavascriptExecutor) driver).executeScript(
+                anyString(), eq("TEST123"), eq("42"), eq("Test Member")))
+                .thenAnswer(invocation -> {
+                    String script = invocation.getArgument(0);
+                    assertTrue(script.contains("inscripcionData.listaSocios.filter"));
+                    assertTrue(script.contains("'#table-jugadores tr[id]'"));
+                    assertTrue(script.contains("String(member.licencia || '').trim() === licence"));
+                    assertTrue(script.contains("String(member.idSocio) === memberId"));
+                    assertTrue(script.contains("row.id === String(member.idSocio)"));
+                    return 1L;
+                });
+
+        assertEquals(1L, invoke("selectedSocioEvidence",
+                new Class<?>[]{String.class, String.class, String.class}, "TEST123", "42", "Test Member"));
+    }
+
+    @Test
     public void socioRowWaitsThroughStaleRowsAndMissingIcons() throws Exception {
         WebElement stale = mock(WebElement.class);
         when(stale.getAttribute("data-licencia")).thenThrow(new StaleElementReferenceException("Replaced row"));

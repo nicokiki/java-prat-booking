@@ -765,21 +765,17 @@ public class TeeOneAutomation {
 
     private long selectedSocioEvidence(String licence, String memberId, String memberName) {
         Object result = ((JavascriptExecutor) driver).executeScript("""
-                const licence = arguments[0], memberId = arguments[1], memberName = arguments[2];
-                const normalize = value => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-                return Array.from(document.querySelectorAll(
-                    'form input, form select, form [data-licencia], form [data-idsocio], form span, form td, '
-                    + '#AmigosSocios input, #AmigosSocios select, #AmigosSocios [data-licencia], '
-                    + '#AmigosSocios [data-idsocio], #AmigosSocios span, #AmigosSocios td, #AmigosSocios li'
-                )).filter(element => !element.closest('#popup-amigo') && (
-                    element.getAttribute('data-licencia') === licence
-                    || (memberId && element.getAttribute('data-idsocio') === memberId)
-                    || ((element.tagName === 'INPUT' || element.tagName === 'SELECT')
-                        && (element.value === licence || (memberId && element.value === memberId)))
-                    || (memberName && element.childElementCount === 0
-                        && element.getClientRects().length > 0
-                        && normalize(element.textContent) === normalize(memberName))
-                )).length;
+                const licence = arguments[0], memberId = arguments[1];
+                if (typeof inscripcionData === 'undefined' || !Array.isArray(inscripcionData.listaSocios)) {
+                    return 0;
+                }
+                const rows = Array.from(document.querySelectorAll('#table-jugadores tr[id]'));
+                return inscripcionData.listaSocios.filter(member =>
+                    String(member.licencia || '').trim() === licence
+                    && (!memberId || String(member.idSocio) === memberId)
+                    && rows.some(row => row.id === String(member.idSocio)
+                        && row.getClientRects().length > 0)
+                ).length;
                 """, licence, memberId, memberName);
         if (!(result instanceof Number count)) {
             throw new IllegalStateException("Could not inspect selected-socio form state");

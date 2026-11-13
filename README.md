@@ -376,9 +376,10 @@ matching row and a visible, enabled plus icon. Rows are re-found on each poll
 to tolerate asynchronous loading and table replacement; there is no fixed
 two-second pause after opening the popup.
 
-After the plus click, the app waits up to five seconds for new selected-member
-evidence in the booking form matching the row's licence, member ID, or visible
-name. Popup closure alone is not considered proof of addition. If this update
+After the plus click, the app waits up to five seconds for the exact licence
+and member ID to appear in TeeOne's `inscripcionData.listaSocios` model and
+for the corresponding member-ID row to be visible in `#table-jugadores`.
+Popup closure alone is not considered proof of addition. If this update
 cannot be verified, or the requested row never becomes ready, the run stops
 before RESERVAR and sends the failure email. Timeout logs include popup
 visibility and licence-row counts without dumping the page or credentials.
