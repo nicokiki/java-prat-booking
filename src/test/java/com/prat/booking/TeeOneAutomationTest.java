@@ -50,6 +50,22 @@ public class TeeOneAutomationTest {
     }
 
     @Test
+    public void capturesStructuredAvailabilityWithoutChoosingOrBooking() throws Exception {
+        invoke("captureAvailability", new Class<?>[]{List.class, int.class},
+                List.of(option("Choose", "-1"), option("8:25 (4)", "slot"), option("09:00", "plain")), 2);
+        var snapshots = automation.getAvailabilitySnapshots();
+        assertEquals(1, snapshots.size());
+        assertEquals(2, snapshots.get(0).get("players"));
+        var options = (List<?>) snapshots.get(0).get("options");
+        assertEquals(2, options.size());
+        assertEquals("08:25", ((java.util.Map<?, ?>) options.get(0)).get("time"));
+        assertEquals(4, ((java.util.Map<?, ?>) options.get(0)).get("places"));
+        assertNull(((java.util.Map<?, ?>) options.get(1)).get("places"));
+        assertFalse(automation.isReservationSubmitted());
+        verify(driver, never()).get(anyString());
+    }
+
+    @Test
     public void hoyosWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Número de hoyos", "Hoyos", "18", "1");
     }

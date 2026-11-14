@@ -4,6 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.LocalDate;
+import java.time.ZonedDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 /**
@@ -22,16 +24,24 @@ public class Main {
         log.info("Starting booking for date: {} (offset from today: {} days)", dateStr, offsetDays);
 
         TeeOneAutomation automation = null;
+        BookingData data = null;
+        ZonedDateTime startedAt = ZonedDateTime.now(ZoneId.of("Europe/Madrid"));
+        Exception bookingError = null;
         try {
-            BookingData data = new GoogleSheetsReader().getBookingForDate(targetDate);
+            data = new GoogleSheetsReader().getBookingForDate(targetDate);
             log.info("Booking data: Fecha={}, Recorrido={}, Horario={}, Socios={}",
                     data.getFecha(), data.getRecorrido(), data.getHorario(), data.getSocios());
 
             automation = new TeeOneAutomation();
             automation.performBooking(data);
-
-            Boolean success = automation.getReservationSuccess();
-            if (Boolean.TRUE.equals(success)) {
+        } catch (Exception exception) {
+            bookingError = exception;
+            log.error("Booking failed", exception);
+        }
+        BookingReport.saveBestEffort(data, targetDate, automation, startedAt);
+        try {
+            Boolean success = automation == null ? null : automation.getReservationSuccess();
+            if (Boolean.TRUE.equals(success) && data != null && automation != null) {
                 LocalDate bookingDate = data.getFecha() == null || data.getFecha().isBlank()
                     ? targetDate : LocalDate.parse(data.getFecha().trim(), DateTimeFormatter.BASIC_ISO_DATE);
                 String details = String.format("Fecha: %s\nRecorrido: %s\nHorario: %s\nSocios: %d",
@@ -44,7 +54,8 @@ public class Main {
                     automation.getReservationBlockedAt());
                 log.info("Booking completed successfully");
             } else {
-                String alert = automation.getReservationAlertText();
+                String alert = automation == null ? null : automation.getReservationAlertText();
+                if (bookingError != null) alert = bookingError.getMessage();
                 String error = (alert == null || alert.isBlank())
                         ? "Reservation failed (no success message). Check page source."
                         : "Reservation failed. Site message: " + alert;
@@ -53,10 +64,7 @@ public class Main {
                 log.error(error);
             }
         } catch (Exception e) {
-            log.error("Booking failed", e);
-            String failureMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            failureMsg = withHoraDeJuegoDropdownOptions(failureMsg, automation);
-            new EmailNotifier().sendFailure(failureMsg);
+            log.error("Notification failed; saved booking outcome is unchanged", e);
         } finally {
             if (automation != null) {
                 automation.close();
@@ -65,7 +73,7 @@ public class Main {
     }
 
     private static LocalDate targetDate() {
-        return LocalDate.now().plusDays(Config.bookingTargetDateOffsetDays());
+        return LocalDate.now(ZoneId.of("Europe/Madrid")).plusDays(Config.bookingTargetDateOffsetDays());
     }
 
     private static String withHoraDeJuegoDropdownOptions(String body, TeeOneAutomation automation) {

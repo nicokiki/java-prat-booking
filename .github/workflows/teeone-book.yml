@@ -22,6 +22,10 @@ concurrency:
 
 jobs:
   run:
+    permissions:
+      contents: read
+    env:
+      DASHBOARD_PUBLISH_ENABLED: ${{ secrets.DASHBOARD_PUBLISH_TOKEN != '' }}
     runs-on: ubuntu-latest
     # Dispatches with waiting enabled idle until 19:35 Madrid, then build + ~20:00 booking window.
     timeout-minutes: 360
@@ -170,6 +174,51 @@ jobs:
         run: |
           set -euo pipefail
           java -jar target/teeone-booking-jar-with-dependencies.jar
+
+      - name: Locate saved booking result
+        id: report
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s results/booking-result.json ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No booking result was saved; no dashboard booking claim will be published."
+          fi
+
+      - name: Back up booking result
+        if: always() && steps.report.outputs.available == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: booking-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: results/booking-result.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Checkout dashboard for publication
+        id: dashboard_checkout
+        if: always() && steps.report.outputs.available == 'true' && env.DASHBOARD_PUBLISH_ENABLED == 'true'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: nicokiki/java-prat-booking-dashboard
+          token: ${{ secrets.DASHBOARD_PUBLISH_TOKEN }}
+          path: .dashboard
+
+      - name: Publish saved booking result
+        if: always() && steps.dashboard_checkout.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          git -C .dashboard config user.name "github-actions[bot]"
+          git -C .dashboard config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 .github/scripts/publish_dashboard.py results/booking-result.json .dashboard
+
+      - name: Dashboard publication setup required
+        if: always() && steps.report.outputs.available == 'true' && env.DASHBOARD_PUBLISH_ENABLED != 'true'
+        run: echo "::warning::Result backed up. Configure DASHBOARD_PUBLISH_TOKEN to publish to the dashboard."
 
       - name: Email alert when booking run starts too late
         if: failure() && steps.booking_window.outcome == 'failure'

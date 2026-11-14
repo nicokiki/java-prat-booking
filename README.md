@@ -431,6 +431,56 @@ CRON_TZ=Europe/Madrid
 
 The **application** then applies its own 19:59:20 / 20:00:01 waits (without `SKIP_MADRID_TIME_WAIT`).
 
+## Dashboard results
+
+The application saves `results/booking-result.json` before email notification.
+The allowlisted report contains the requested and actual booking, Madrid
+timestamps, outcome, requested participants, and observed tee-time options for
+each checked course. Names are captured from TeeOne when observed; missing names
+or the booking holder's licence remain unrecorded rather than being guessed.
+Socios' requested licences come from the sheet. Reports contain no passwords,
+Google credentials, screenshots, reservation alerts, or raw exceptions.
+
+Outcomes are `Confirmed`, `Unavailable`, `Uncertain`, or `Technical failure`.
+Any submission attempt without an observed success message is `Uncertain`;
+check existing reservations before attempting recovery. Notification and
+publication failures never rerun the booking.
+
+The scheduled workflow backs up the JSON as a `booking-result-*` artifact for
+90 days. This repository is public, so the backup is not a private-data vault.
+The persistent public history is hosted at
+https://nicokiki.github.io/java-prat-booking-dashboard/.
+
+### Publishing setup
+
+1. Create a fine-grained GitHub personal access token owned by `nicokiki`,
+  restricted to `java-prat-booking-dashboard`, with **Contents: Read and write**.
+  Use an expiry and renew it before expiration. No Actions or administration
+  permissions are needed.
+2. In this booking repository, open **Settings > Secrets and variables > Actions**
+  and add the token as a repository secret named `DASHBOARD_PUBLISH_TOKEN`.
+  Enter it directly on GitHub, never in chat or in a committed file.
+3. The normal booking workflow will publish saved results to
+  `data/executions.json` in the dashboard repository. If the token is absent or
+  publishing fails, the saved report remains in the artifact; no booking retry
+  is performed.
+
+### Safe validation and first-run verification
+
+Run `mvn -B clean test` and `python3 .github/scripts/test_publish_dashboard.py`
+locally, or dispatch **Dashboard publishing check (no booking)**. That workflow
+runs mocked report tests and fixture publisher tests, then validates the exact
+Java-generated fixture against the dashboard archive with a publisher dry-run;
+it does not open TeeOne, send email, or push fixture data. Publisher dry-run:
+`python3 .github/scripts/publish_dashboard.py REPORT_JSON DASHBOARD_REPO --dry-run`.
+
+After the next normal scheduled booking, check the saved artifact, publication
+step, dashboard execution ID/outcome, actual course/time, observed names and
+licencias, and course snapshots. A green workflow alone is not proof of booking.
+If the runner is stopped before it saves a report, no booking claim is published.
+This change does not schedule availability-only runs. History comparisons need
+repeated observations for the same play date, player count, and 18 holes.
+
 ## Troubleshooting
 
 - **No slots / BLOQUEAR disabled** — the club may show “no availability”; fix date, recorrido, and jugadores on the real site; automation cannot invent tee times.

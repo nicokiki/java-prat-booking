@@ -27,6 +27,9 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Locale;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -57,6 +60,12 @@ public class TeeOneAutomation {
     private ZonedDateTime reservationConfirmedAt;
     private String selectedHoraDeJuego;
     private String selectedRecorrido;
+    private final List<Map<String, Object>> availabilitySnapshots = new ArrayList<>();
+    private final Map<String, String> observedSocioNames = new LinkedHashMap<>();
+    private boolean reservationSubmitted;
+    private boolean bookingUnavailable;
+    private ZonedDateTime bookingFormStartedAt;
+    private Map<String, Object> bookingHolder = Map.of();
 
     public TeeOneAutomation() {
         // Driver is initialized later (time-based) from performBooking()
@@ -84,6 +93,12 @@ public class TeeOneAutomation {
         reservationConfirmedAt = null;
         selectedHoraDeJuego = null;
         selectedRecorrido = null;
+        availabilitySnapshots.clear();
+        observedSocioNames.clear();
+        reservationSubmitted = false;
+        bookingUnavailable = false;
+        bookingFormStartedAt = null;
+        bookingHolder = Map.of();
 
         ZoneId madrid = ZoneId.of("Europe/Madrid");
         ZonedDateTime nowMadrid = ZonedDateTime.now(madrid);
@@ -118,7 +133,9 @@ public class TeeOneAutomation {
 
         // Start filling exactly at 20:00:01 Madrid time when possible.
         waitUntilMadrid(fillAt, "fillBookingForm");
+        bookingFormStartedAt = ZonedDateTime.now(madrid);
         fillBookingForm(data);
+        captureBookingHolder();
         addSocios(data);
         confirmReservation();
         sleep(Duration.ofMillis(1500));
@@ -222,6 +239,7 @@ public class TeeOneAutomation {
         } catch (NoSuitableTeeTimeException unavailable) {
             String alternate = alternateRecorrido(data.getRecorrido());
             if (alternate == null) {
+                bookingUnavailable = true;
                 throw unavailable;
             }
                 log.warn("No suitable time on '{}'; trying '{}' within {} minutes of '{}'",
@@ -229,6 +247,7 @@ public class TeeOneAutomation {
             try {
                 selectCourseAndTime(data, alternate);
             } catch (NoSuitableTeeTimeException alternateUnavailable) {
+                bookingUnavailable = true;
                 alternateUnavailable.addSuppressed(unavailable);
                 throw alternateUnavailable;
             }
@@ -397,6 +416,10 @@ public class TeeOneAutomation {
         } catch (IllegalStateException e) {
             WebElement dropdown = findSelectByLabelOrName("Hora de juego");
             if (e.getCause() instanceof TimeoutException && dropdown != null
+                    && dropdown.isDisplayed() && dropdown.isEnabled()) {
+                captureAvailabilityBestEffort(new Select(dropdown).getOptions(), socios);
+            }
+            if (e.getCause() instanceof TimeoutException && dropdown != null
                     && dropdown.isDisplayed() && dropdown.isEnabled()
                     && new Select(dropdown).getOptions().stream().allMatch(option ->
                         !option.isEnabled() || option.getText().isBlank()
@@ -408,6 +431,7 @@ public class TeeOneAutomation {
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
+        captureAvailabilityBestEffort(options, socios);
         horaDeJuegoDropdownOptions = formatHoraDeJuegoOptionsForEmail(options);
         log.info("Hora de juego options (sheet='{}', socios={}):", raw, socios);
         for (WebElement opt : options) {
@@ -712,6 +736,9 @@ public class TeeOneAutomation {
 
             String memberId = row.getAttribute("data-idsocio");
             String memberName = row.getAttribute("data-nombre");
+                if (memberName != null && !memberName.isBlank()) {
+                    observedSocioNames.put(key, memberName.trim());
+                }
             long beforeAddition = selectedSocioEvidence(key, memberId, memberName);
             log.info("Clicking plus icon for socio data-licencia={}", key);
             clickWithScrollAndJsFallback(plusIcon, "Add selected socio");
@@ -824,6 +851,7 @@ public class TeeOneAutomation {
                     "//button[contains(.,'RESERVAR')]"
             ));
         }
+        reservationSubmitted = true;
         clickWithScrollAndJsFallback(reservarBtn, "RESERVAR");
         log.info("Clicked on reservar button successfully");
 
@@ -874,6 +902,77 @@ public class TeeOneAutomation {
     public byte[] getReservationScreenshot() {
         return reservationScreenshot == null ? null : reservationScreenshot.clone();
     }
+
+    private void captureAvailability(List<WebElement> options, int players) {
+        List<Map<String, Object>> offered = new ArrayList<>();
+        Pattern labelPattern = Pattern.compile("^(\\d{1,2}:\\d{2})(?:\\s*\\((\\d+)\\))?$");
+        for (WebElement option : options) {
+            String label = option.getText();
+            if (label == null || "-1".equals(option.getAttribute("value"))) continue;
+            Matcher labelMatch = labelPattern.matcher(label.trim());
+            if (!labelMatch.matches()) continue;
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("time", LocalTime.parse(labelMatch.group(1), DateTimeFormatter.ofPattern("H:mm")).toString());
+            value.put("places", labelMatch.group(2) == null ? null : Integer.valueOf(labelMatch.group(2)));
+            value.put("enabled", option.isEnabled());
+            offered.add(value);
+        }
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("course", selectedRecorrido);
+        snapshot.put("capturedAt", ZonedDateTime.now(ZoneId.of("Europe/Madrid")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        snapshot.put("players", players);
+        snapshot.put("holes", 18);
+        snapshot.put("options", offered);
+        availabilitySnapshots.add(snapshot);
+    }
+
+    private void captureAvailabilityBestEffort(List<WebElement> options, int players) {
+        try {
+            captureAvailability(options, players);
+        } catch (RuntimeException exception) {
+            log.warn("Availability observation failed; booking selection continues");
+        }
+    }
+
+    private void captureBookingHolder() {
+        try {
+            Object observed = ((JavascriptExecutor) driver).executeScript("""
+                    if (typeof inscripcionData === 'undefined' || !Array.isArray(inscripcionData.listaSocios)
+                        || inscripcionData.listaSocios.length !== 1) return null;
+                    const member = inscripcionData.listaSocios[0];
+                    const row = Array.from(document.querySelectorAll('#table-jugadores tr[id]'))
+                        .find(candidate => candidate.id === String(member.idSocio)
+                            && candidate.getClientRects().length > 0);
+                    if (!row || !member.licencia) return null;
+                    return {name: String(member.nombre || row.getAttribute('data-nombre') || '').trim(),
+                        licencia: String(member.licencia).trim()};
+                    """);
+            if (observed instanceof Map<?, ?> value) {
+                Map<String, Object> holder = new LinkedHashMap<>();
+                holder.put("name", value.get("name"));
+                holder.put("licencia", value.get("licencia"));
+                bookingHolder = holder;
+            }
+        } catch (RuntimeException exception) {
+            log.warn("Booking holder identity was not observed");
+        }
+    }
+
+    public Map<String, Object> getBookingHolder() { return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(bookingHolder)); }
+
+    public List<Map<String, Object>> getAvailabilitySnapshots() {
+        return List.copyOf(availabilitySnapshots);
+    }
+
+    public Map<String, String> getObservedSocioNames() {
+        return Map.copyOf(observedSocioNames);
+    }
+
+    public boolean isReservationSubmitted() { return reservationSubmitted; }
+
+    public boolean isBookingUnavailable() { return bookingUnavailable; }
+
+    public ZonedDateTime getBookingFormStartedAt() { return bookingFormStartedAt; }
 
     public ZonedDateTime getReservationConfirmedAt() {
         return reservationConfirmedAt;
