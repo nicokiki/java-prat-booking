@@ -257,6 +257,7 @@ Configure these under **Settings → Secrets and variables → Actions** (names 
 | `EMAIL_SMTP_PORT` | e.g. `587` |
 | `EMAIL_SMTP_SSL` | `true` or `false` |
 | `EMAIL_SMTP_STARTTLS` | `true` or `false` |
+| `DASHBOARD_PUBLISH_TOKEN` | Publish saved results to `java-prat-booking-dashboard` (Contents: Read and write on that repository only) |
 
 The workflow writes `credentials/google-service-account.json` and a runtime `.env` on the runner, then builds a fat JAR and runs `java -jar target/teeone-booking-jar-with-dependencies.jar`.
 
@@ -321,7 +322,8 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 1. Load configuration; resolve **target date** and read the matching **Google Sheet** row.
 2. (Unless skipped) **Wait** until the configured **Europe/Madrid** instants, then open the inscripción URL, log in, and wait for **Recorrido**.
 3. Fill **Recorrido** (with waits for options/AJAX), **Número de hoyos**, **Jugadores**, **Hora de juego**; then **BLOQUEAR**, add socios, **RESERVAR**.
-4. On success or failure, send email; include **Hora de juego** option labels if that step ran.
+4. Save the structured result before sending email; include **Hora de juego** option labels in the email if that step ran.
+5. On GitHub Actions, back up the saved report and publish its allowlisted data to the public dashboard. Notification or publication failures do not retry the booking.
 
 ### Form readiness and validation
 
@@ -451,6 +453,22 @@ The scheduled workflow backs up the JSON as a `booking-result-*` artifact for
 The persistent public history is hosted at
 https://nicokiki.github.io/java-prat-booking-dashboard/.
 
+### Rollout status (2026-11-14)
+
+**Steps 1-6 are complete; Step 7 is pending.**
+
+1. **Public-data scope:** approved public booking details, names, and licencias; credentials and screenshots are excluded from reports.
+2. **Dashboard setup:** created the public dashboard repository and enabled GitHub Pages.
+3. **Structured results:** implemented outcomes, Madrid timestamps, participants, and observed availability, saved before email.
+4. **Publication pipeline:** implemented artifact backup and allowlisted, execution-ID-based publication; `DASHBOARD_PUBLISH_TOKEN` is configured in this repository's Actions secrets.
+5. **Real-data dashboard:** replaced fictional records with saved JSON and pushed both integrations to `main`. Booking integration commit: `ff61a48`; dashboard integration commit: `78e99ee`.
+6. **Safe validation:** local Java and publisher tests, the Java-to-publisher dry-run, and the final JAR build passed. The [no-booking check](https://github.com/nicokiki/java-prat-booking/actions/runs/43621477702) and [Pages deployment](https://github.com/nicokiki/java-prat-booking-dashboard/actions/runs/43621458180) succeeded. No real booking or email was triggered for these checks.
+7. **Pending:** verify the next normal scheduled booking and its published result using the checklist below. The token's actual write access has not yet been exercised.
+
+At this checkpoint, the public archive is empty, as expected. No fictional
+records were published, and no extra booking or availability-only schedule was
+added for verification.
+
 ### Publishing setup
 
 1. Create a fine-grained GitHub personal access token owned by `nicokiki`,
@@ -474,9 +492,15 @@ Java-generated fixture against the dashboard archive with a publisher dry-run;
 it does not open TeeOne, send email, or push fixture data. Publisher dry-run:
 `python3 .github/scripts/publish_dashboard.py REPORT_JSON DASHBOARD_REPO --dry-run`.
 
-After the next normal scheduled booking, check the saved artifact, publication
-step, dashboard execution ID/outcome, actual course/time, observed names and
-licencias, and course snapshots. A green workflow alone is not proof of booking.
+**Step 7: verify the next normal scheduled booking, not an extra test booking.**
+
+1. Confirm the `booking-result-*` artifact contains the saved execution report.
+2. Check the dashboard checkout and publication steps, confirming that the configured token can write to the dashboard repository. Publication is best-effort, so a green workflow alone does not prove publication succeeded.
+3. Match the report's execution ID and outcome to the public archive and dashboard. Check the actual course/time for a confirmed booking; an uncertain result must not claim confirmation.
+4. Check participants' names and licencias, ensuring missing identities remain unrecorded, and compare course snapshots with the saved report.
+5. Confirm Pages serves the new record after deployment. For an uncertain result, inspect existing TeeOne reservations before any recovery attempt; do not rerun the booking merely to test publication.
+
+A green workflow alone is not proof of booking.
 If the runner is stopped before it saves a report, no booking claim is published.
 This change does not schedule availability-only runs. History comparisons need
 repeated observations for the same play date, player count, and 18 holes.
