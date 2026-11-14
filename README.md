@@ -505,6 +505,27 @@ If the runner is stopped before it saves a report, no booking claim is published
 This change does not schedule availability-only runs. History comparisons need
 repeated observations for the same play date, player count, and 18 holes.
 
+### Deleting a dashboard execution
+
+Select an execution on the dashboard and click **Delete**. The dialog identifies
+the selected execution and offers **Cancel**, **Copy ID**, and **Continue in
+GitHub**. Opening the dialog does not delete or hide the record.
+
+1. Copy the execution ID and continue to **Delete dashboard execution (no booking)** in this repository's Actions page.
+2. Click **Run workflow** on `main`, paste the exact ID into `execution_id`, and set `confirmation` to **yes**. GitHub does not prefill the ID from the dashboard.
+3. Run the workflow as the repository owner. It removes only the matching execution and its snapshots, using the existing publishing secret, then commits the archive update to the dashboard repository. Pages rebuilds; refresh the dashboard after deployment.
+
+The workflow only runs when explicitly dispatched by the owner with confirmation.
+It does not run Java, send email, cancel TeeOne reservations, delete artifacts,
+or rewrite Git history. Invalid or missing IDs fail without changing the archive.
+A concurrent publication can reject the deletion push rather than lose newer
+records; inspect the failed run and retry only this deletion workflow if needed.
+
+Fixture tests: `python3 .github/scripts/test_delete_dashboard_execution.py`.
+A no-write preview is available with
+`python3 .github/scripts/delete_dashboard_execution.py ARCHIVE_JSON --execution-id ID --dry-run`.
+Never place a GitHub token in the dashboard's JavaScript.
+
 ## Troubleshooting
 
 - **No slots / BLOQUEAR disabled** — the club may show “no availability”; fix date, recorrido, and jugadores on the real site; automation cannot invent tee times.

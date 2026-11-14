@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/scripts/*dashboard*'
       - '.github/workflows/dashboard-check.yml'
+      - '.github/workflows/delete-dashboard-execution.yml'
       - 'src/main/java/com/prat/booking/BookingReport.java'
       - 'src/test/java/com/prat/booking/BookingReportTest.java'
 
@@ -26,6 +27,8 @@ jobs:
         run: mvn -B -Dtest=BookingReportTest test
       - name: Validate publisher with fixtures
         run: python3 .github/scripts/test_publish_dashboard.py
+      - name: Validate execution deletion with fixtures
+        run: python3 .github/scripts/test_delete_dashboard_execution.py
       - name: Checkout public dashboard for dry-run
         uses: actions/checkout@v4
         with:

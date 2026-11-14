@@ -1,0 +1,48 @@
+name: Delete dashboard execution (no booking)
+
+on:
+  workflow_dispatch:
+    inputs:
+      execution_id:
+        description: Execution ID copied from the dashboard
+        type: string
+        required: true
+      confirmation:
+        description: Delete this execution and its snapshots from the public dashboard only?
+        type: choice
+        required: true
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    if: github.actor == github.repository_owner && inputs.confirmation == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deletion script
+        uses: actions/checkout@v4
+      - name: Validate deletion logic with fixtures
+        run: python3 .github/scripts/test_delete_dashboard_execution.py
+      - name: Checkout current dashboard archive
+        uses: actions/checkout@v4
+        with:
+          repository: nicokiki/java-prat-booking-dashboard
+          token: ${{ secrets.DASHBOARD_PUBLISH_TOKEN }}
+          ref: main
+          path: .dashboard
+      - name: Delete approved execution and publish
+        env:
+          EXECUTION_ID: ${{ inputs.execution_id }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/delete_dashboard_execution.py .dashboard/data/executions.json --execution-id "$EXECUTION_ID" --confirm-delete
+          git -C .dashboard config user.name "github-actions[bot]"
+          git -C .dashboard config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C .dashboard add -- data/executions.json
+          git -C .dashboard commit -m "Remove dashboard execution $EXECUTION_ID"
+          git -C .dashboard push origin HEAD:main
