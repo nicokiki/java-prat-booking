@@ -27,19 +27,34 @@ public class Main {
         BookingData data = null;
         ZonedDateTime startedAt = ZonedDateTime.now(ZoneId.of("Europe/Madrid"));
         Exception bookingError = null;
+        boolean informational = false;
         try {
-            data = new GoogleSheetsReader().getBookingForDate(targetDate);
-            log.info("Booking data: Fecha={}, Recorrido={}, Horario={}, Socios={}",
-                    data.getFecha(), data.getRecorrido(), data.getHorario(), data.getSocios());
-
+            try {
+                data = new GoogleSheetsReader().getBookingForDate(targetDate);
+            } catch (GoogleSheetsReader.NoBookingForDateException missing) {
+                informational = true;
+                log.info("No booking row for {}; inspecting availability only", targetDate);
+            }
             automation = new TeeOneAutomation();
-            automation.performBooking(data);
+            if (informational) {
+                automation.performAvailabilityInspection(targetDate);
+            } else if (data != null) {
+                log.info("Booking data: Fecha={}, Recorrido={}, Horario={}, Socios={}",
+                    data.getFecha(), data.getRecorrido(), data.getHorario(), data.getSocios());
+                automation.performBooking(data);
+            } else {
+                throw new IllegalStateException("Sheets reader returned no booking data");
+            }
         } catch (Exception exception) {
             bookingError = exception;
             log.error("Booking failed", exception);
         }
         BookingReport.saveBestEffort(data, targetDate, automation, startedAt);
         try {
+            if (informational) {
+                log.info("Availability-only run finished; no booking email requested");
+                return;
+            }
             Boolean success = automation == null ? null : automation.getReservationSuccess();
             if (Boolean.TRUE.equals(success) && data != null && automation != null) {
                 LocalDate bookingDate = data.getFecha() == null || data.getFecha().isBlank()

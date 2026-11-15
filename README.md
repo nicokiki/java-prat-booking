@@ -443,10 +443,23 @@ or the booking holder's licence remain unrecorded rather than being guessed.
 Socios' requested licences come from the sheet. Reports contain no passwords,
 Google credentials, screenshots, reservation alerts, or raw exceptions.
 
-Outcomes are `Confirmed`, `Unavailable`, `Uncertain`, or `Technical failure`.
+Outcomes are `Confirmed`, `Unavailable`, `Uncertain`, `Technical failure`, or `Informational`.
 Any submission attempt without an observed success message is `Uncertain`;
 check existing reservations before attempting recovery. Notification and
 publication failures never rerun the booking.
+
+If the sheet has valid headers but no row for the target play date, the same
+scheduled run inspects **Rosa, Amarillo, and Verde**, always selecting **2 players**
+and **18 holes**. It records all offered tee-time options without a requested-time
+window. It never selects a tee time, clicks BLOQUEAR, adds socios, or submits a
+reservation. A complete inspection produces an `Informational` dashboard result
+with no participants, booked slot, or booking timestamps. Partial inspections
+remain `Technical failure`, preserving any successfully captured snapshots.
+
+Availability-only runs send **no email**, including when inspection fails. A
+matching sheet row continues the existing booking and success/failure email
+flow unchanged. Empty sheets, invalid headers, and Sheets/API errors are still
+technical failures, not missing-row inspections. No new schedule is added.
 
 The scheduled workflow backs up the JSON as a `booking-result-*` artifact for
 90 days. This repository is public, so the backup is not a private-data vault.

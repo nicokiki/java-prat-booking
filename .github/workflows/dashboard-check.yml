@@ -7,8 +7,8 @@ on:
       - '.github/scripts/*dashboard*'
       - '.github/workflows/dashboard-check.yml'
       - '.github/workflows/delete-dashboard-execution.yml'
-      - 'src/main/java/com/prat/booking/BookingReport.java'
-      - 'src/test/java/com/prat/booking/BookingReportTest.java'
+      - 'src/main/java/com/prat/booking/*.java'
+      - 'src/test/java/com/prat/booking/*.java'
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
           java-version: '17'
           cache: maven
       - name: Validate reports with mocked tests
-        run: mvn -B -Dtest=BookingReportTest test
+        run: mvn -B clean test
       - name: Validate publisher with fixtures
         run: python3 .github/scripts/test_publish_dashboard.py
       - name: Validate execution deletion with fixtures
@@ -36,4 +36,6 @@ jobs:
           path: .dashboard
           persist-credentials: false
       - name: Validate Java report against dashboard archive without publishing
-        run: python3 .github/scripts/publish_dashboard.py target/dashboard-fixture.json .dashboard --dry-run
+        run: |
+          python3 .github/scripts/publish_dashboard.py target/dashboard-fixture.json .dashboard --dry-run
+          python3 .github/scripts/publish_dashboard.py target/informational-fixture.json .dashboard --dry-run

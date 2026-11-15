@@ -43,5 +43,32 @@ public class BookingReportTest {
         when(automation.isBookingUnavailable()).thenReturn(true);
         assertEquals("Unavailable", BookingReport.outcome(automation));
         assertEquals("Technical failure", BookingReport.outcome(null));
+        Map<String, Object> report = BookingReport.create(null, LocalDate.of(2026,11,17), null,
+            ZonedDateTime.parse("2026-11-15T20:00:01+01:00"));
+        assertEquals("Technical failure", report.get("outcome"));
+        assertNull(report.get("players"));
+        assertEquals(List.of(), report.get("participants"));
     }
+
+        @Test
+        public void informationalReportHasNoBookingOrParticipantsAndSerializesFixture() throws Exception {
+        TeeOneAutomation automation = mock(TeeOneAutomation.class);
+        when(automation.isAvailabilityOnly()).thenReturn(true);
+        when(automation.isInformationalComplete()).thenReturn(true);
+        when(automation.getAvailabilitySnapshots()).thenReturn(List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")
+            .stream().map(course -> Map.<String, Object>of("course", course, "players", 2, "holes", 18,
+                "capturedAt", "2026-11-15T20:00:02+01:00", "options", List.of())).toList());
+        Map<String, Object> report = BookingReport.create(null, LocalDate.of(2026,11,17), automation,
+            ZonedDateTime.parse("2026-11-15T20:00:01+01:00"));
+        assertEquals("Informational", report.get("outcome"));
+        assertEquals(2, report.get("players"));
+        assertEquals(List.of(), report.get("participants"));
+        assertNull(report.get("requested"));
+        assertNull(report.get("booked"));
+        assertNull(report.get("confirmedAt"));
+        assertNull(report.get("blockedAt"));
+        BookingReport.write(Path.of("target", "informational-fixture.json"), report);
+        when(automation.isInformationalComplete()).thenReturn(false);
+        assertEquals("Technical failure", BookingReport.outcome(automation));
+        }
 }

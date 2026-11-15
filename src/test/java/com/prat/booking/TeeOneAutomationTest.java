@@ -70,6 +70,84 @@ public class TeeOneAutomationTest {
         assertDelayedChoice("Número de hoyos", "Hoyos", "18", "1");
     }
 
+        @Test
+        public void informationalInspectionCapturesAllCoursesWithoutChoosingTimeOrBooking() throws Exception {
+        AtomicReference<String> course = new AtomicReference<>("");
+        WebElement rosa = courseOption("TEE 1 ROSA", "0", course);
+        WebElement amarillo = courseOption("TEE 1 AMARILLO", "1", course);
+        WebElement verde = courseOption("TEE 1 VERDE", "2", course);
+        doReturn(dropdown(rosa, amarillo, verde)).when(driver).findElement(By.id("Recorrido"));
+        doReturn(dropdown(option("18", "1"))).when(driver).findElement(By.id("Hoyos"));
+        WebElement twoPlayers = option("2", "2");
+        doReturn(dropdown(twoPlayers)).when(driver).findElement(By.id("Plazas"));
+        WebElement afternoon = option("17:55 (4)", "17:55");
+        doReturn(dropdown(afternoon)).when(driver).findElement(By.id("HoraJuego"));
+
+        invoke("inspectAllCourses", new Class<?>[]{});
+
+        assertEquals(List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"),
+            automation.getAvailabilitySnapshots().stream().map(snapshot -> snapshot.get("course")).toList());
+        for (var snapshot : automation.getAvailabilitySnapshots()) {
+            assertEquals(2, snapshot.get("players"));
+            assertEquals(18, snapshot.get("holes"));
+        }
+        verify(afternoon, never()).click();
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getReservationBlockedAt());
+        assertNull(automation.getSelectedHoraDeJuego());
+        assertTrue(mockingDetails(driver).getInvocations().stream()
+            .filter(invocation -> invocation.getMethod().getName().equals("findElement"))
+            .allMatch(invocation -> List.of(By.id("Recorrido"), By.id("Hoyos"), By.id("Plazas"), By.id("HoraJuego"),
+                By.id("Número de hoyos"), By.id("Jugadores"), By.id("Hora de juego"))
+                .contains(invocation.getArgument(0))));
+        Field initialized = TeeOneAutomation.class.getDeclaredField("initialized");
+        initialized.setAccessible(true);
+        initialized.set(automation, true);
+        doThrow(new WebDriverException("Fixture is already logged in")).when(driver).findElement(By.cssSelector(
+            "input[type='text'], input[name='username'], input[id*='user'], input[placeholder*='Usuario']"));
+        try (var config = mockStatic(Config.class)) {
+            config.when(Config::skipMadridTimeWait).thenReturn(true);
+            automation.performAvailabilityInspection(java.time.LocalDate.of(2026, 11, 17));
+        }
+        assertTrue(automation.isAvailabilityOnly());
+        assertTrue(automation.isInformationalComplete());
+        assertEquals(3, automation.getAvailabilitySnapshots().size());
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getReservationBlockedAt());
+        verify(driver).get(endsWith("20261117"));
+        doAnswer(invocation -> {
+            if ("TEE 1 ROSA".equals(course.get())) throw new WebDriverException("Fixture course inspection failed");
+            return true;
+        }).when((JavascriptExecutor) driver).executeScript("return !window.jQuery || window.jQuery.active === 0;");
+        try (var config = mockStatic(Config.class)) {
+            config.when(Config::skipMadridTimeWait).thenReturn(true);
+            assertThrows(IllegalStateException.class,
+                () -> automation.performAvailabilityInspection(java.time.LocalDate.of(2026, 11, 17)));
+        }
+        assertFalse(automation.isInformationalComplete());
+        assertEquals(List.of("TEE 1 AMARILLO", "TEE 1 VERDE"), automation.getAvailabilitySnapshots().stream()
+            .map(snapshot -> snapshot.get("course")).toList());
+        assertFalse(automation.isReservationSubmitted());
+        verify(afternoon, never()).click();
+        }
+
+        @Test
+        public void informationalInspectionKeepsEmptyCoursesAndContinues() throws Exception {
+        AtomicReference<String> course = new AtomicReference<>("");
+        doReturn(dropdown(courseOption("TEE 1 ROSA", "0", course),
+            courseOption("TEE 1 AMARILLO", "1", course), courseOption("TEE 1 VERDE", "2", course)))
+            .when(driver).findElement(By.id("Recorrido"));
+        doReturn(dropdown(option("18", "1"))).when(driver).findElement(By.id("Hoyos"));
+        doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
+        WebElement empty = dropdown(option("Choose", "-1"));
+        WebElement offered = dropdown(option("09:00 (2)", "09:00"));
+        doAnswer(invocation -> course.get().equals("TEE 1 ROSA") ? empty : offered)
+            .when(driver).findElement(By.id("HoraJuego"));
+        invoke("inspectAllCourses", new Class<?>[]{});
+        assertEquals(3, automation.getAvailabilitySnapshots().size());
+        assertEquals(List.of(), automation.getAvailabilitySnapshots().get(0).get("options"));
+        }
+
     @Test
     public void jugadoresWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Jugadores", "Plazas", "2", "2");

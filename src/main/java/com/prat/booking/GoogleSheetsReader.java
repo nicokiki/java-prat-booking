@@ -30,6 +30,12 @@ import java.util.stream.Collectors;
  */
 public class GoogleSheetsReader {
 
+    public static final class NoBookingForDateException extends IllegalStateException {
+        public NoBookingForDateException(LocalDate targetDate) {
+            super("No row found for date " + targetDate + " in Google Sheet");
+        }
+    }
+
     private static final Logger log = LoggerFactory.getLogger(GoogleSheetsReader.class);
     private static final String DATE_COLUMN = "Fecha";
 
@@ -69,6 +75,10 @@ public class GoogleSheetsReader {
                 .execute();
 
         List<List<Object>> rows = response.getValues();
+        return bookingFromRows(rows, targetDate);
+    }
+
+    static BookingData bookingFromRows(List<List<Object>> rows, LocalDate targetDate) {
         if (rows == null || rows.isEmpty()) {
             throw new IllegalStateException("Google Sheet is empty");
         }
@@ -107,10 +117,10 @@ public class GoogleSheetsReader {
             return new BookingData(rowDateStr, recorrido, horario, socios, sociosToAdd);
         }
 
-        throw new IllegalStateException("No row found for date " + targetDate + " in Google Sheet");
+        throw new NoBookingForDateException(targetDate);
     }
 
-    private int findColumnIndex(List<String> headers, String... names) {
+    private static int findColumnIndex(List<String> headers, String... names) {
         for (String name : names) {
             for (int i = 0; i < headers.size(); i++) {
                 if (headers.get(i).equalsIgnoreCase(name)) {
@@ -121,13 +131,13 @@ public class GoogleSheetsReader {
         throw new IllegalStateException("Column not found: " + String.join(", ", names));
     }
 
-    private String getCell(List<Object> row, int index) {
+    private static String getCell(List<Object> row, int index) {
         if (index >= row.size()) return "";
         Object val = row.get(index);
         return val != null ? val.toString().trim() : "";
     }
 
-    private String normalizeDate(Object cellValue) {
+    private static String normalizeDate(Object cellValue) {
         if (cellValue == null) return "";
         String raw = cellValue.toString();
         // Handle numeric values from Google Sheets (e.g. 20260221 or 20260221.0)
@@ -138,7 +148,7 @@ public class GoogleSheetsReader {
         return raw.replaceAll("[^0-9]", "");
     }
 
-    private int parseInt(String s, int defaultValue) {
+    private static int parseInt(String s, int defaultValue) {
         try {
             return Integer.parseInt(s.trim());
         } catch (NumberFormatException e) {

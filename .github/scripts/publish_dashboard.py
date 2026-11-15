@@ -7,12 +7,13 @@ from datetime import date, datetime
 from pathlib import Path
 
 
-OUTCOMES = {"Confirmed", "Unavailable", "Uncertain", "Technical failure"}
+OUTCOMES = {"Confirmed", "Unavailable", "Uncertain", "Technical failure", "Informational"}
 SUMMARIES = {
     "Reservation success message observed.",
     "No eligible tee time on the checked courses. Reservation not submitted.",
     "Reservation submission attempted; confirmation not observed. Check TeeOne before retrying.",
     "Booking stopped before reservation submission. Check the workflow logs.",
+    "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.",
 }
 FIELDS = {
     "schemaVersion", "executionId", "executionDate", "startedAt", "finishedAt", "playDate",
@@ -72,6 +73,16 @@ def clean_report(report):
                 raise ValueError("Invalid enabled state")
             snapshot["options"].append({key: offered.get(key) for key in ("time", "places", "enabled")})
         clean["availability"].append(snapshot)
+    if clean["outcome"] == "Informational":
+        if clean["players"] != 2 or clean["participants"] or any(clean[key] is not None for key in
+                ("requested", "booked", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
+            raise ValueError("Informational report cannot claim booking activity or participants")
+        if len(clean["availability"]) != 3 or {snapshot["course"] for snapshot in clean["availability"]} != {
+                "TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"}:
+            raise ValueError("Informational report must inspect all three courses")
+        if any(snapshot["players"] != 2 or snapshot["holes"] != 18 or snapshot["selectedTime"] is not None
+               for snapshot in clean["availability"]):
+            raise ValueError("Informational snapshots must use two players, 18 holes and no selected time")
     return clean
 
 

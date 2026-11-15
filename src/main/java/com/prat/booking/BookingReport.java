@@ -44,10 +44,12 @@ public final class BookingReport {
         result.put("startedAt", timestamp(startedAt));
         result.put("finishedAt", timestamp(ZonedDateTime.now(ZoneId.of("Europe/Madrid"))));
         result.put("playDate", playDate.toString());
-        result.put("players", data == null ? null : data.getSocios());
+        Integer players = data == null ? null : Integer.valueOf(data.getSocios());
+        if (automation != null && automation.isAvailabilityOnly()) players = Integer.valueOf(2);
+        result.put("players", players);
         result.put("requested", data == null ? null : data.getRecorrido() + " " + data.getHorario());
         result.put("outcome", outcome);
-        result.put("booked", "Confirmed".equals(outcome)
+        result.put("booked", automation != null && "Confirmed".equals(outcome)
                 ? automation.getSelectedRecorrido() + " " + automation.getSelectedHoraDeJuego() : null);
         result.put("blockedAt", automation == null ? null : timestamp(automation.getReservationBlockedAt()));
         result.put("confirmedAt", automation == null ? null : timestamp(automation.getReservationConfirmedAt()));
@@ -59,6 +61,7 @@ public final class BookingReport {
             case "Confirmed" -> "Reservation success message observed.";
             case "Unavailable" -> "No eligible tee time on the checked courses. Reservation not submitted.";
             case "Uncertain" -> "Reservation submission attempted; confirmation not observed. Check TeeOne before retrying.";
+            case "Informational" -> "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.";
             default -> "Booking stopped before reservation submission. Check the workflow logs.";
         });
         List<Map<String, Object>> participants = new ArrayList<>();
@@ -66,7 +69,7 @@ public final class BookingReport {
         holder.put("role", "booking-holder");
         holder.put("name", automation == null ? null : automation.getBookingHolder().get("name"));
         holder.put("licencia", automation == null ? null : automation.getBookingHolder().get("licencia"));
-        participants.add(holder);
+        if (data != null) participants.add(holder);
         if (data != null) {
             for (String licence : data.getSociosToAdd()) {
                 Map<String, Object> participant = new LinkedHashMap<>();
@@ -95,6 +98,7 @@ public final class BookingReport {
     static String outcome(TeeOneAutomation automation) {
         if (automation != null && Boolean.TRUE.equals(automation.getReservationSuccess())) return "Confirmed";
         if (automation != null && automation.isReservationSubmitted()) return "Uncertain";
+        if (automation != null && automation.isInformationalComplete()) return "Informational";
         if (automation != null && automation.isBookingUnavailable()) return "Unavailable";
         return "Technical failure";
     }

@@ -64,6 +64,20 @@ class PublisherTest(unittest.TestCase):
             self.assertEqual({"fixture-old", "fixture-new", "fixture-concurrent"},
                              {report["executionId"] for report in archive["executions"]})
 
+    def test_informational_reports_are_observation_only(self):
+        report = self.report()
+        report.update(outcome="Informational", participants=[], summary=
+                      "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.")
+        report["availability"] = [{"executionId": report["executionId"], "playDate": report["playDate"],
+                "course": course, "capturedAt": "2026-11-15T20:00:02+01:00", "players": 2, "holes": 18,
+                "selectedTime": None, "options": []} for course in ["TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"]]
+        self.assertEqual("Informational", publisher.clean_report(report)["outcome"])
+        for key, value in [("booked", "Rosa 08:00"), ("confirmedAt", "2026-11-15T20:00:02+01:00"),
+                           ("players", 3), ("participants", [{"role": "socio", "licencia": "DEMO"}]),
+                           ("availability", report["availability"][:2])]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                publisher.clean_report({**report, key: value})
+
 
 if __name__ == "__main__":
     unittest.main()

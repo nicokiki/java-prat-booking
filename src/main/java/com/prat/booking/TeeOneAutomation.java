@@ -84,6 +84,22 @@ public class TeeOneAutomation {
      * Performs the full booking flow.
      */
     public void performBooking(BookingData data) {
+        perform(data, false);
+    }
+
+    public void performAvailabilityInspection(LocalDate targetDate) {
+        perform(new BookingData(targetDate.format(DateTimeFormatter.BASIC_ISO_DATE), null, null, 2, List.of()), true);
+    }
+
+    private boolean availabilityOnly;
+    private boolean informationalComplete;
+
+    public boolean isAvailabilityOnly() { return availabilityOnly; }
+    public boolean isInformationalComplete() { return informationalComplete; }
+
+    private void perform(BookingData data, boolean inspectOnly) {
+        availabilityOnly = inspectOnly;
+        informationalComplete = false;
         reservationSuccess = null;
         reservationAlertClass = null;
         reservationAlertText = null;
@@ -133,6 +149,11 @@ public class TeeOneAutomation {
 
         // Start filling exactly at 20:00:01 Madrid time when possible.
         waitUntilMadrid(fillAt, "fillBookingForm");
+        if (inspectOnly) {
+            inspectAllCourses();
+            informationalComplete = true;
+            return;
+        }
         bookingFormStartedAt = ZonedDateTime.now(madrid);
         fillBookingForm(data);
         captureBookingHolder();
@@ -275,13 +296,44 @@ public class TeeOneAutomation {
     }
 
     private void selectCourseAndTime(BookingData data, String recorrido) {
+        selectCourseFilters(recorrido, data.getSocios());
+        selectHoraDeJuego(data.getHorario(), data.getSocios());
+    }
+
+    private void selectCourseFilters(String recorrido, int players) {
         selectedHoraDeJuego = null;
         horaDeJuegoDropdownOptions = null;
         selectDropdown("Recorrido", recorrido);
         selectDropdown("Número de hoyos", "18");
-        selectDropdown("Jugadores", String.valueOf(data.getSocios()));
+        selectDropdown("Jugadores", String.valueOf(players));
         waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT);
-        selectHoraDeJuego(data.getHorario(), data.getSocios());
+    }
+
+    private void inspectAllCourses() {
+        IllegalStateException failure = null;
+        for (String course : List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")) {
+            try {
+                selectCourseFilters(course, 2);
+                new WebDriverWait(driver, DEFAULT_TIMEOUT).until(current -> Boolean.TRUE.equals(
+                        ((JavascriptExecutor) current).executeScript("return !window.jQuery || window.jQuery.active === 0;")));
+                WebElement dropdown;
+                try {
+                    dropdown = waitUntilDropdownReady("Hora de juego", option ->
+                            !option.getText().isBlank() && !"-1".equals(option.getAttribute("value")),
+                            "a nonblank, non-placeholder time option");
+                } catch (IllegalStateException exception) {
+                    dropdown = findSelectByLabelOrName("Hora de juego");
+                    if (!(exception.getCause() instanceof TimeoutException) || dropdown == null
+                            || !dropdown.isDisplayed() || !dropdown.isEnabled()) throw exception;
+                }
+                captureAvailability(new Select(dropdown).getOptions(), 2);
+            } catch (RuntimeException exception) {
+                if (failure == null) failure = new IllegalStateException("Availability inspection incomplete");
+                failure.addSuppressed(exception);
+                log.warn("Could not inspect availability for {}", course);
+            }
+        }
+        if (failure != null) throw failure;
     }
 
     private String alternateRecorrido(String recorrido) {
