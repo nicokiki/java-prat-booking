@@ -51,6 +51,7 @@ public final class BookingReport {
         result.put("outcome", outcome);
         result.put("booked", automation != null && "Confirmed".equals(outcome)
                 ? automation.getSelectedRecorrido() + " " + automation.getSelectedHoraDeJuego() : null);
+        result.put("bookingFormStartedAt", automation == null ? null : timestamp(automation.getBookingFormStartedAt()));
         result.put("blockedAt", automation == null ? null : timestamp(automation.getReservationBlockedAt()));
         result.put("confirmedAt", automation == null ? null : timestamp(automation.getReservationConfirmedAt()));
         Double duration = automation != null && automation.getBookingFormStartedAt() != null

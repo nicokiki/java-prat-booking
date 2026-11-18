@@ -76,11 +76,21 @@ class PublisherTest(unittest.TestCase):
         self.assertEqual("Informational", publisher.clean_report(report)["outcome"])
         self.assertEqual("Informational", publisher.clean_report({**report, "availability": report["availability"][:2]})["outcome"])
         for key, value in [("booked", "Rosa 08:00"), ("confirmedAt", "2026-11-15T20:00:02+01:00"),
+                           ("bookingFormStartedAt", "2026-11-15T20:00:01+01:00"),
                            ("players", 3), ("participants", [{"role": "socio", "licencia": "DEMO"}]),
                            ("availability", report["availability"][:1]),
                            ("availability", report["availability"][:2] * 2)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 publisher.clean_report({**report, key: value})
+
+    def test_form_start_is_allowlisted_optional_and_offset_aware(self):
+        report = self.report()
+        self.assertIsNone(publisher.clean_report(report)["bookingFormStartedAt"])
+        report["bookingFormStartedAt"] = "2026-11-14T20:00:01+01:00"
+        self.assertEqual(report["bookingFormStartedAt"], publisher.clean_report(report)["bookingFormStartedAt"])
+        report["bookingFormStartedAt"] = "2026-11-14T20:00:01"
+        with self.assertRaises(ValueError):
+            publisher.clean_report(report)
 
 
 if __name__ == "__main__":

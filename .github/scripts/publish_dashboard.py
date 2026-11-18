@@ -18,7 +18,7 @@ SUMMARIES = {
 FIELDS = {
     "schemaVersion", "executionId", "executionDate", "startedAt", "finishedAt", "playDate",
     "players", "participants", "requested", "outcome", "booked", "blockedAt", "confirmedAt",
-    "bookingDurationSeconds", "summary", "availability",
+    "bookingDurationSeconds", "bookingFormStartedAt", "summary", "availability",
 }
 
 
@@ -38,7 +38,7 @@ def clean_report(report):
     clean = {key: copy.deepcopy(report.get(key)) for key in FIELDS}
     if clean["outcome"] == "Uncertain":
         clean["outcome"] = "Technical failure"
-    for key in ("startedAt", "finishedAt", "blockedAt", "confirmedAt"):
+    for key in ("startedAt", "finishedAt", "bookingFormStartedAt", "blockedAt", "confirmedAt"):
         if clean[key] is not None:
             value = datetime.fromisoformat(clean[key])
             if value.utcoffset() is None:
@@ -77,7 +77,7 @@ def clean_report(report):
         clean["availability"].append(snapshot)
     if clean["outcome"] == "Informational":
         if clean["players"] != 2 or clean["participants"] or any(clean[key] is not None for key in
-                ("requested", "booked", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
+                ("requested", "booked", "bookingFormStartedAt", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
             raise ValueError("Informational report cannot claim booking activity or participants")
         courses = {snapshot["course"] for snapshot in clean["availability"]}
         if len(clean["availability"]) != len(courses) or courses not in (

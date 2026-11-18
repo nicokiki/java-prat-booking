@@ -14,6 +14,21 @@ import static org.mockito.Mockito.*;
 
 public class BookingReportTest {
     @Test
+    public void confirmedReportPreservesFormStartForBothTimingMetrics() {
+        TeeOneAutomation automation = mock(TeeOneAutomation.class);
+        ZonedDateTime formStart = ZonedDateTime.parse("2026-11-18T20:00:01+01:00");
+        when(automation.getReservationSuccess()).thenReturn(true);
+        when(automation.getBookingFormStartedAt()).thenReturn(formStart);
+        when(automation.getReservationBlockedAt()).thenReturn(formStart.plusSeconds(4));
+        when(automation.getReservationConfirmedAt()).thenReturn(formStart.plusSeconds(10));
+        Map<String, Object> report = BookingReport.create(new BookingData("20261120", "TEE 1 ROSA", "08:00", 2, List.of()),
+                LocalDate.of(2026, 11, 20), automation, formStart.minusMinutes(20));
+        assertEquals("2026-11-18T20:00:01+01:00", report.get("bookingFormStartedAt"));
+        assertEquals("2026-11-18T20:00:05+01:00", report.get("blockedAt"));
+        assertEquals(10.0, report.get("bookingDurationSeconds"));
+    }
+
+    @Test
     public void preservesConfirmedAndUnconfirmedSubmissionSafetyAndRequestedPlayers() throws Exception {
         TeeOneAutomation automation = mock(TeeOneAutomation.class);
         when(automation.getBookingHolder()).thenReturn(Map.of("name", "Holder", "licencia", "DEMO-1"));

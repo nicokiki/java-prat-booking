@@ -443,6 +443,13 @@ or the booking holder's licence remain unrecorded rather than being guessed.
 Socios' requested licences come from the sheet. Reports contain no passwords,
 Google credentials, screenshots, reservation alerts, or raw exceptions.
 
+Reports also save `bookingFormStartedAt` for the dashboard's Confirmed-only median
+time-to-block and time-to-confirm KPIs. Older reports remain supported by
+reconstructing form start from confirmation time minus saved booking duration.
+The dashboard's not-bookable count means times absent from the dropdown relative
+to the observed reference, not listed options with insufficient capacity, and it
+does not identify who booked an absent time. No booking or email behavior changes.
+
 Outcomes are `Confirmed`, `Unavailable`, `Technical failure`, or `Informational`.
 Any submission attempt without an observed success message is `Technical failure`,
 with an explicit warning to check TeeOne before retrying. Historical `Uncertain`
