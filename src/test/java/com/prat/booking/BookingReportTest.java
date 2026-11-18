@@ -14,7 +14,7 @@ import static org.mockito.Mockito.*;
 
 public class BookingReportTest {
     @Test
-    public void preservesConfirmedAndUncertainOutcomesAndRequestedPlayers() throws Exception {
+    public void preservesConfirmedAndUnconfirmedSubmissionSafetyAndRequestedPlayers() throws Exception {
         TeeOneAutomation automation = mock(TeeOneAutomation.class);
         when(automation.getBookingHolder()).thenReturn(Map.of("name", "Holder", "licencia", "DEMO-1"));
         when(automation.getObservedSocioNames()).thenReturn(Map.of("DEMO-2", "Socio"));
@@ -22,7 +22,8 @@ public class BookingReportTest {
         ZonedDateTime start = ZonedDateTime.now(ZoneId.of("Europe/Madrid"));
         when(automation.isReservationSubmitted()).thenReturn(true);
         Map<String, Object> uncertain = BookingReport.create(data, LocalDate.of(2026,11,15), automation, start);
-        assertEquals("Uncertain", uncertain.get("outcome"));
+        assertEquals("Technical failure", uncertain.get("outcome"));
+        assertEquals("Reservation submission attempted; confirmation not observed. Check TeeOne before retrying.", uncertain.get("summary"));
         assertNull(uncertain.get("booked"));
         assertEquals(2, ((List<?>) uncertain.get("participants")).size());
         when(automation.getReservationSuccess()).thenReturn(true);
@@ -32,7 +33,7 @@ public class BookingReportTest {
         Path output = Path.of("target", "dashboard-fixture.json");
         BookingReport.write(output, uncertain);
         Map<?, ?> decoded = GsonFactory.getDefaultInstance().fromString(Files.readString(output), Map.class);
-        assertEquals("Uncertain", decoded.get("outcome"));
+        assertEquals("Technical failure", decoded.get("outcome"));
         assertFalse(Files.readString(output).contains("password"));
     }
 
@@ -55,7 +56,7 @@ public class BookingReportTest {
         TeeOneAutomation automation = mock(TeeOneAutomation.class);
         when(automation.isAvailabilityOnly()).thenReturn(true);
         when(automation.isInformationalComplete()).thenReturn(true);
-        when(automation.getAvailabilitySnapshots()).thenReturn(List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")
+        when(automation.getAvailabilitySnapshots()).thenReturn(List.of("TEE 1 ROSA", "TEE 1 AMARILLO")
             .stream().map(course -> Map.<String, Object>of("course", course, "players", 2, "holes", 18,
                 "capturedAt", "2026-11-15T20:00:02+01:00", "options", List.of())).toList());
         Map<String, Object> report = BookingReport.create(null, LocalDate.of(2026,11,17), automation,

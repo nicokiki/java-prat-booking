@@ -310,8 +310,16 @@ public class TeeOneAutomation {
     }
 
     private void inspectAllCourses() {
+        WebElement courseDropdown = waitUntilDropdownReady("Recorrido", option ->
+                !option.getText().isBlank() && !"-1".equals(option.getAttribute("value")), "available course options");
+        boolean verdeOffered = new Select(courseDropdown).getOptions().stream().anyMatch(option ->
+                optionMatchesChoice(option, "TEE 1 VERDE", canonicalOptionLabel("TEE 1 VERDE"), compactOptionKey("TEE 1 VERDE")));
         IllegalStateException failure = null;
         for (String course : List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")) {
+            if ("TEE 1 VERDE".equals(course) && !verdeOffered) {
+                log.info("Verde is not offered for this date; skipping");
+                continue;
+            }
             try {
                 selectCourseFilters(course, 2);
                 new WebDriverWait(driver, DEFAULT_TIMEOUT).until(current -> Boolean.TRUE.equals(

@@ -60,9 +60,10 @@ public final class BookingReport {
         result.put("summary", switch (outcome) {
             case "Confirmed" -> "Reservation success message observed.";
             case "Unavailable" -> "No eligible tee time on the checked courses. Reservation not submitted.";
-            case "Uncertain" -> "Reservation submission attempted; confirmation not observed. Check TeeOne before retrying.";
             case "Informational" -> "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.";
-            default -> "Booking stopped before reservation submission. Check the workflow logs.";
+                default -> automation != null && automation.isReservationSubmitted()
+                    ? "Reservation submission attempted; confirmation not observed. Check TeeOne before retrying."
+                    : "Booking stopped before reservation submission. Check the workflow logs.";
         });
         List<Map<String, Object>> participants = new ArrayList<>();
         Map<String, Object> holder = new LinkedHashMap<>();
@@ -97,7 +98,7 @@ public final class BookingReport {
 
     static String outcome(TeeOneAutomation automation) {
         if (automation != null && Boolean.TRUE.equals(automation.getReservationSuccess())) return "Confirmed";
-        if (automation != null && automation.isReservationSubmitted()) return "Uncertain";
+        if (automation != null && automation.isReservationSubmitted()) return "Technical failure";
         if (automation != null && automation.isInformationalComplete()) return "Informational";
         if (automation != null && automation.isBookingUnavailable()) return "Unavailable";
         return "Technical failure";

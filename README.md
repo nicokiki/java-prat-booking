@@ -443,18 +443,23 @@ or the booking holder's licence remain unrecorded rather than being guessed.
 Socios' requested licences come from the sheet. Reports contain no passwords,
 Google credentials, screenshots, reservation alerts, or raw exceptions.
 
-Outcomes are `Confirmed`, `Unavailable`, `Uncertain`, `Technical failure`, or `Informational`.
-Any submission attempt without an observed success message is `Uncertain`;
+Outcomes are `Confirmed`, `Unavailable`, `Technical failure`, or `Informational`.
+Any submission attempt without an observed success message is `Technical failure`,
+with an explicit warning to check TeeOne before retrying. Historical `Uncertain`
+reports are accepted and grouped under Technical Failure on the dashboard;
 check existing reservations before attempting recovery. Notification and
 publication failures never rerun the booking.
 
 If the sheet has valid headers but no row for the target play date, the same
-scheduled run inspects **Rosa, Amarillo, and Verde**, always selecting **2 players**
+scheduled run inspects **Rosa and Amarillo**, plus **Verde when offered** in the
+Recorrido dropdown, always selecting **2 players**
 and **18 holes**. It records all offered tee-time options without a requested-time
 window. It never selects a tee time, clicks BLOQUEAR, adds socios, or submits a
-reservation. A complete inspection produces an `Informational` dashboard result
+reservation. Verde's absence is normal: it is skipped without a selection timeout
+or a fabricated empty snapshot. A complete inspection produces an `Informational` dashboard result
 with no participants, booked slot, or booking timestamps. Partial inspections
-remain `Technical failure`, preserving any successfully captured snapshots.
+remain `Technical failure`, preserving any successfully captured snapshots. This
+includes a failure to inspect Verde when it is offered.
 
 Availability-only runs send **no email**, including when inspection fails. A
 matching sheet row continues the existing booking and success/failure email

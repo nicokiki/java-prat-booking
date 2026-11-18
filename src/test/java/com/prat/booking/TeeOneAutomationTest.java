@@ -116,7 +116,7 @@ public class TeeOneAutomationTest {
         assertNull(automation.getReservationBlockedAt());
         verify(driver).get(endsWith("20261117"));
         doAnswer(invocation -> {
-            if ("TEE 1 ROSA".equals(course.get())) throw new WebDriverException("Fixture course inspection failed");
+            if ("TEE 1 VERDE".equals(course.get())) throw new WebDriverException("Fixture course inspection failed");
             return true;
         }).when((JavascriptExecutor) driver).executeScript("return !window.jQuery || window.jQuery.active === 0;");
         try (var config = mockStatic(Config.class)) {
@@ -125,7 +125,7 @@ public class TeeOneAutomationTest {
                 () -> automation.performAvailabilityInspection(java.time.LocalDate.of(2026, 11, 17)));
         }
         assertFalse(automation.isInformationalComplete());
-        assertEquals(List.of("TEE 1 AMARILLO", "TEE 1 VERDE"), automation.getAvailabilitySnapshots().stream()
+        assertEquals(List.of("TEE 1 ROSA", "TEE 1 AMARILLO"), automation.getAvailabilitySnapshots().stream()
             .map(snapshot -> snapshot.get("course")).toList());
         assertFalse(automation.isReservationSubmitted());
         verify(afternoon, never()).click();
@@ -151,6 +151,33 @@ public class TeeOneAutomationTest {
     @Test
     public void jugadoresWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Jugadores", "Plazas", "2", "2");
+    }
+
+    @Test
+    public void informationalInspectionSkipsVerdeWhenNotOffered() throws Exception {
+        AtomicReference<String> course = new AtomicReference<>("");
+        doReturn(dropdown(courseOption("TEE 1 ROSA", "0", course), courseOption("TEE 1 AMARILLO", "1", course)))
+                .when(driver).findElement(By.id("Recorrido"));
+        doReturn(dropdown(option("18", "1"))).when(driver).findElement(By.id("Hoyos"));
+        doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
+        WebElement offered = option("17:55 (4)", "17:55");
+        doReturn(dropdown(offered)).when(driver).findElement(By.id("HoraJuego"));
+
+        Field initialized = TeeOneAutomation.class.getDeclaredField("initialized");
+        initialized.setAccessible(true);
+        initialized.set(automation, true);
+        try (var config = mockStatic(Config.class)) {
+            config.when(Config::skipMadridTimeWait).thenReturn(true);
+            automation.performAvailabilityInspection(java.time.LocalDate.of(2026, 11, 20));
+        }
+
+        assertEquals(List.of("TEE 1 ROSA", "TEE 1 AMARILLO"), automation.getAvailabilitySnapshots().stream()
+                .map(snapshot -> snapshot.get("course")).toList());
+        assertTrue(automation.isInformationalComplete());
+        assertEquals("Informational", BookingReport.outcome(automation));
+        verify(offered, never()).click();
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getSelectedHoraDeJuego());
     }
 
     @Test

@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 
-OUTCOMES = {"Confirmed", "Unavailable", "Uncertain", "Technical failure", "Informational"}
+OUTCOMES = {"Confirmed", "Unavailable", "Technical failure", "Informational"}
 SUMMARIES = {
     "Reservation success message observed.",
     "No eligible tee time on the checked courses. Reservation not submitted.",
@@ -23,7 +23,7 @@ FIELDS = {
 
 
 def clean_report(report):
-    if report.get("schemaVersion") != 1 or report.get("outcome") not in OUTCOMES:
+    if report.get("schemaVersion") != 1 or report.get("outcome") not in OUTCOMES | {"Uncertain"}:
         raise ValueError("Unsupported report schema or outcome")
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", report.get("executionId", "")):
         raise ValueError("Invalid execution ID")
@@ -36,6 +36,8 @@ def clean_report(report):
     if report["outcome"] != "Confirmed" and report.get("booked") is not None:
         raise ValueError("Unconfirmed report cannot claim a booking")
     clean = {key: copy.deepcopy(report.get(key)) for key in FIELDS}
+    if clean["outcome"] == "Uncertain":
+        clean["outcome"] = "Technical failure"
     for key in ("startedAt", "finishedAt", "blockedAt", "confirmedAt"):
         if clean[key] is not None:
             value = datetime.fromisoformat(clean[key])
@@ -77,9 +79,10 @@ def clean_report(report):
         if clean["players"] != 2 or clean["participants"] or any(clean[key] is not None for key in
                 ("requested", "booked", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
             raise ValueError("Informational report cannot claim booking activity or participants")
-        if len(clean["availability"]) != 3 or {snapshot["course"] for snapshot in clean["availability"]} != {
-                "TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"}:
-            raise ValueError("Informational report must inspect all three courses")
+        courses = {snapshot["course"] for snapshot in clean["availability"]}
+        if len(clean["availability"]) != len(courses) or courses not in (
+                {"TEE 1 ROSA", "TEE 1 AMARILLO"}, {"TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"}):
+            raise ValueError("Informational report must inspect Rosa and Amarillo, with Verde optional")
         if any(snapshot["players"] != 2 or snapshot["holes"] != 18 or snapshot["selectedTime"] is not None
                for snapshot in clean["availability"]):
             raise ValueError("Informational snapshots must use two players, 18 holes and no selected time")

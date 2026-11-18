@@ -23,6 +23,8 @@ class PublisherTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "executions.json"
             first = publisher.merge_report(path, self.report())
+            self.assertEqual("Technical failure", first["executions"][0]["outcome"])
+            self.assertIn("Check TeeOne before retrying", first["executions"][0]["summary"])
             self.assertNotIn("NEVER-PUBLISH", json.dumps(first))
             path.write_text(json.dumps(first))
             second = publisher.merge_report(path, self.report("fixture-2"))
@@ -72,9 +74,11 @@ class PublisherTest(unittest.TestCase):
                 "course": course, "capturedAt": "2026-11-15T20:00:02+01:00", "players": 2, "holes": 18,
                 "selectedTime": None, "options": []} for course in ["TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"]]
         self.assertEqual("Informational", publisher.clean_report(report)["outcome"])
+        self.assertEqual("Informational", publisher.clean_report({**report, "availability": report["availability"][:2]})["outcome"])
         for key, value in [("booked", "Rosa 08:00"), ("confirmedAt", "2026-11-15T20:00:02+01:00"),
                            ("players", 3), ("participants", [{"role": "socio", "licencia": "DEMO"}]),
-                           ("availability", report["availability"][:2])]:
+                           ("availability", report["availability"][:1]),
+                           ("availability", report["availability"][:2] * 2)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 publisher.clean_report({**report, key: value})
 
