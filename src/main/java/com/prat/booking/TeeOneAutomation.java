@@ -604,28 +604,56 @@ public class TeeOneAutomation {
             timeout = Duration.ofSeconds(3);
         }
         log.info("Waiting for dropdown '{}' to be enabled and contain {}...", label, expectedOption);
+        java.util.function.Function<WebDriver, WebElement> ready = current -> {
+            WebElement dropdown = findSelectByLabelOrName(label);
+            if (dropdown == null) {
+                dropdown = current.findElement(By.xpath(
+                        "//label[contains(.,'" + label + "')]/following::select[1] | " +
+                        "//*[contains(text(),'" + label + "')]/following::select[1]"));
+            }
+            if (!dropdown.isDisplayed() || !dropdown.isEnabled()) return null;
+            for (WebElement option : new Select(dropdown).getOptions()) {
+                if (option.isEnabled() && optionReady.test(option)) return dropdown;
+            }
+            return null;
+        };
         try {
             return new WebDriverWait(driver, timeout)
                     .pollingEvery(Duration.ofMillis(200))
                     .ignoring(StaleElementReferenceException.class)
-                    .until(d -> {
-                        WebElement dropdown = findSelectByLabelOrName(label);
-                        if (dropdown == null) {
-                            dropdown = d.findElement(By.xpath(
-                                    "//label[contains(.,'" + label + "')]/following::select[1] | " +
-                                    "//*[contains(text(),'" + label + "')]/following::select[1]"));
-                        }
-                        if (!dropdown.isDisplayed() || !dropdown.isEnabled()) {
-                            return null;
-                        }
-                        for (WebElement option : new Select(dropdown).getOptions()) {
-                            if (option.isEnabled() && optionReady.test(option)) {
-                                return dropdown;
-                            }
-                        }
-                        return null;
-                    });
+                    .until(ready);
         } catch (TimeoutException e) {
+            if ("Hora de juego".equalsIgnoreCase(label.trim())) {
+                Map<?, ?> pending = availabilityResponse();
+                if (Boolean.TRUE.equals(pending.get("pending")) && pending.get("requestId") instanceof Number) {
+                    timeout = timeout.plusSeconds(1);
+                    log.info("Hora de juego: matching availability request {} still pending after 3 seconds; allowing at most 1 extra second",
+                            pending.get("requestId"));
+                    try {
+                        Map<?, ?> completed = new WebDriverWait(driver, Duration.ofSeconds(1))
+                                .pollingEvery(Duration.ofMillis(100))
+                                .until(current -> {
+                                    Map<?, ?> response = availabilityResponse();
+                                    if (!java.util.Objects.equals(pending.get("requestId"), response.get("requestId"))) {
+                                        throw new IllegalStateException("Availability request changed during the conditional one-second wait");
+                                    }
+                                    return Boolean.TRUE.equals(response.get("pending")) ? null : response;
+                                });
+                        log.info("Hora de juego: conditional wait completed with response {}", completed);
+                        if (!successfulAvailabilityResponse(completed)) {
+                            throw new IllegalStateException("Availability request failed, was malformed, or system closed during the conditional wait");
+                        }
+                        if (((Number) completed.get("timeCount")).intValue() > 0) {
+                            WebElement dropdown = ready.apply(driver);
+                            if (dropdown != null) return dropdown;
+                            throw new IllegalStateException("Availability response completed with times but dropdown is not ready");
+                        }
+                    } catch (TimeoutException extensionTimeout) {
+                        log.info("Hora de juego: availability request remains pending after the one-second extension");
+                        throw new IllegalStateException("Availability request remains pending after the one-second extension");
+                    }
+                }
+            }
             throw new IllegalStateException(
                     "Timed out after " + timeout.toSeconds() + " seconds waiting for dropdown '"
                         + label + "' to be enabled and contain " + expectedOption, e);

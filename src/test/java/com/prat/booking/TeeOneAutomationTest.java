@@ -399,6 +399,84 @@ public class TeeOneAutomationTest {
     }
 
     @Test(timeout = 6000)
+    public void pendingTimeRequestGetsOneSecondExtensionAndAcceptsLateTimes() throws Exception {
+        AtomicReference<Boolean> completed = new AtomicReference<>(false);
+        WebElement empty = dropdown(option("", "-1"));
+        WebElement late = dropdown(option("13:50 (4)", "13:50"));
+        doAnswer(invocation -> completed.get() ? late : empty).when(driver).findElement(By.id("HoraJuego"));
+        doAnswer(new org.mockito.stubbing.Answer<Object>() {
+            private int reads;
+            public Object answer(org.mockito.invocation.InvocationOnMock invocation) {
+                if (reads++ == 0) return java.util.Map.of("pending", true, "requestId", 1L);
+                completed.set(true);
+                return java.util.Map.of("pending", false, "requestId", 1L, "httpStatus", 200,
+                        "apiCode", 1, "systemOpen", true, "timeCount", 1);
+            }
+        }).when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        assertSame(late, await("Hora de juego", option -> !option.getText().isBlank()));
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getReservationBlockedAt());
+    }
+
+    @Test(timeout = 6000)
+    public void completedEmptyTimeResponseDoesNotGetExtraSecond() throws Exception {
+        doReturn(dropdown(option("", "-1"))).when(driver).findElement(By.id("HoraJuego"));
+        doReturn(java.util.Map.of("pending", false, "requestId", 1L, "httpStatus", 200,
+                "apiCode", 1, "systemOpen", true, "timeCount", 0))
+                .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> await("Hora de juego", option -> !option.getText().isBlank()));
+        assertTrue(failure.getMessage().contains("after 3 seconds"));
+        verify((JavascriptExecutor) driver, times(1)).executeScript(availabilityReadScript());
+    }
+
+    @Test(timeout = 6500)
+    public void stillPendingTimeRequestStopsAfterOneExtensionAsTechnicalFailure() throws Exception {
+        doReturn(dropdown(option("", "-1"))).when(driver).findElement(By.id("HoraJuego"));
+        doReturn(java.util.Map.of("pending", true, "requestId", 1L))
+                .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "13:00", 2));
+        assertFalse(automation.isBookingUnavailable());
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertNull(automation.getReservationBlockedAt());
+        assertTrue(failure.getMessage().contains("pending"));
+        assertNull(failure.getCause());
+    }
+
+    @Test(timeout = 6000)
+        public void pendingRequestCompletingEmptyUsesConfirmedUnavailability() throws Exception {
+        doReturn(dropdown(option("", "-1"))).when(driver).findElement(By.id("HoraJuego"));
+        doReturn(java.util.Map.of("pending", true, "requestId", 1L),
+            java.util.Map.of("pending", false, "requestId", 1L, "httpStatus", 200,
+                "apiCode", 1, "systemOpen", true, "timeCount", 0))
+            .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        assertThrows(NoSuchElementException.class,
+            () -> invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "13:00", 2));
+        assertEquals(1, automation.getAvailabilitySnapshots().size());
+        assertEquals(List.of(), automation.getAvailabilitySnapshots().get(0).get("options"));
+        assertNull(automation.getReservationBlockedAt());
+        }
+
+        @Test(timeout = 15000)
+        public void changedOrFailedRequestDuringExtensionIsTechnical() throws Exception {
+        doReturn(dropdown(option("", "-1"))).when(driver).findElement(By.id("HoraJuego"));
+        List<java.util.Map<String, Object>> terminal = List.of(
+            java.util.Map.of("pending", false, "requestId", 2L, "httpStatus", 200,
+                "apiCode", 1, "systemOpen", true, "timeCount", 0),
+            java.util.Map.of("pending", false, "requestId", 1L, "httpStatus", 503,
+                "apiCode", -1, "systemOpen", true, "timeCount", 0));
+        for (var response : terminal) {
+            doReturn(java.util.Map.of("pending", true, "requestId", 1L), response)
+                .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+            assertThrows(IllegalStateException.class,
+                () -> await("Hora de juego", option -> !option.getText().isBlank()));
+        }
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertNull(automation.getReservationBlockedAt());
+        }
+
+        @Test(timeout = 6000)
     public void emptyTimeDropdownFailsWithReadinessTimeout() throws Exception {
         WebElement dropdown = dropdown(option("", "-1"));
         doReturn(dropdown).when(driver).findElement(By.id("HoraJuego"));

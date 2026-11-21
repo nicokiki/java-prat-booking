@@ -1,8 +1,39 @@
 # TeeOne Golf Booking
 
-Automated tee time booking for [TeeOne](https://members.teeone.golf) (Prat). It logs in, fills the inscripción form, and confirms the reserva. Booking preferences come from **Google Sheets**; results are sent by **email**. The app is tuned for **Europe/Madrid** wall-clock behaviour around **20:00** so slots that open on the hour are hit at the right time.
+## High-Level Summary
+
+Java/Selenium automation for [TeeOne](https://members.teeone.golf) at Real Club
+de Golf El Prat. Google Sheets supplies booking preferences; email and a public
+[dashboard](https://nicokiki.github.io/java-prat-booking-dashboard/) report results.
+
+- **Timing:** an external scheduler dispatches GitHub Actions around 19:00 Madrid;
+  setup starts at 19:35, login preparation around 19:59:20, and form filling at
+  **20:00:01**. Runner and site delays mean these are targets, not guarantees.
+- **Sheet:** one row per play date, with course, preferred time, total players and
+  the exact additional-player licences. The default target is **today + 2 days**.
+- **Booking:** 18 holes; choose the closest eligible offered time within
+  **+/-90 minutes**. Rosa and Amarillo fall back to each other before BLOQUEAR;
+  Verde has no alternate course. There is no reservation retry after blocking
+  or submission problems.
+- **No target-date row:** inspect courses for two players and 18 holes, without
+  choosing a time, blocking, reserving or emailing. This is Informational only
+  if the inspection completes; invalid sheet data and API errors are technical.
+- **Availability:** use DOM text when Selenium text is blank. A three-second
+  time-dropdown wait gains **at most one extra second only for a matching pending
+  request**. Confirmed empty API responses do not get that extension.
+- **Results:** Confirmed, Unavailable, Technical Failure or Informational.
+  A green Actions run does not prove booking success. Logs distinguish API errors
+  from confirmed empty availability, while public reports exclude credentials.
+
+**Manual execution is not a dry run.** The workflow's wait-bypass input defaults
+to true. Production scheduling must explicitly set it to false; never dispatch
+again merely to test publication or recover an unconfirmed reservation.
 
 You can run it **locally** (Java + Chrome) or on **GitHub Actions** (externally scheduled or manual).
+
+Start with [Google Sheets](#google-sheets), [repository secrets](#repository-secrets),
+[external scheduling](#external-scheduling-with-cron-joborg), and
+[safe validation](#safe-validation-and-execution-verification).
 
 ## Components and services
 
@@ -68,28 +99,39 @@ flowchart TD
 - **Google Chrome** (Selenium 4 manages the driver)
 - **Google Cloud** project with Sheets API and a service account
 - **SMTP** (e.g. Gmail with an [app password](https://support.google.com/accounts/answer/185833)) for notifications
+- **Node.js** for observer regression tests only; it is not required to run the booking JAR
 
 ## Google Sheets
 
-Put these headers in the first row, with one booking preference row per play
-date. This CSV example can be imported into Google Sheets (or pasted and split
-into columns using a comma separator):
+Use these exact headers in row 1 and one booking row per **play date**. Format
+Fecha and the licence columns as plain text; keep Horario displayed as `HH:mm`
+or `H:mm`, without seconds or AM/PM.
 
-```csv
-Fecha,Recorrido,Horario,Socios,Socio-1,Socio-2,Socio-3
-20261111,TEE 1 ROSA,08:30,2,100001,,
-20261112,TEE 1 AMARILLO,08:35,3,100001,100002,
-20261113,TEE 1 VERDE,09:00,4,100001,100002,100003
-```
+| Fecha | Recorrido | Horario | Socios | Socio-1 | Socio-2 | Socio-3 |
+|-------|-----------|---------|--------|---------|---------|---------|
+| 20261111 | TEE 1 ROSA | 08:30 | 2 | 100001 | | |
+| 20261112 | TEE 1 AMARILLO | 08:35 | 3 | 100001 | 100002 | |
+| 20261113 | TEE 1 VERDE | 09:00 | 4 | 100001 | 100002 | 100003 |
 
-The member numbers above are **fictional examples**; replace them with the
-actual socios to add. Empty cells stay empty, not `...` or `N/A`.
+The licence values are **fictional examples**. Replace them with the exact
+licences used by TeeOne's additional-socio lookup, not names or partial matches.
+Leave unused cells genuinely empty, not `...`, `N/A` or a dash. The logged-in
+player counts toward Socios and is not entered again as an additional player.
 
-- **Fecha**: play date in `yyyyMMdd`, not the day the automation runs. The app selects the row for the **target date** (see [Target date](#target-date) below). For example, a run on 9 November 2026 with the default two-day offset selects `20261111`.
-- **Recorrido**: preferred course, using the dropdown label, such as `TEE 1 ROSA` or `TEE 1 AMARILLO`. Rosa and Amarillo automatically fall back to each other if the preferred course has no suitable time. Verde has no alternate-course fallback.
-- **Horario**: preferred tee time in `HH:mm` or `H:mm`, for example `08:30` or `8:30`. It is a preference, not an exact-time requirement: the app accepts offered times within **90 minutes before or after it, inclusive**. Keep the displayed cell value in this format, without seconds or AM/PM.
-- **Socios**: total player count selected in the form. A time must have enough places for that count.
-- **Socio-1**, **Socio-2**, **Socio-3**: member numbers for additional players when **Añadir a otro socio** is used. For two players, fill `Socio-1`; for three, also fill `Socio-2`; for four, fill all three. The logged-in player is already included in the total.
+| Column | What to enter |
+|--------|---------------|
+| `Fecha` | Play date as `yyyyMMdd`, not execution date. A November 9 run with offset 2 selects `20261111`. |
+| `Recorrido` | Exact course label: `TEE 1 ROSA`, `TEE 1 AMARILLO` or `TEE 1 VERDE`. |
+| `Horario` | Preferred time, such as `08:30`; eligible offered times may be up to 90 minutes earlier or later, inclusive. |
+| `Socios` | Total players, including the logged-in player; the chosen time must have sufficient places. |
+| `Socio-1` | First additional player's exact licence; required for two, three or four players. |
+| `Socio-2` | Second additional player's exact licence; required for three or four players. |
+| `Socio-3` | Third additional player's exact licence; required for four players. |
+
+For CSV import, use the same headers and comma-separated values shown in the
+table. Do not create a second row for the same date to request another course.
+A valid sheet without the target-date row intentionally triggers availability-only
+inspection. An empty sheet, invalid headers or a Sheets error does not.
 
 There are **no new columns or settings** for the time window or alternate
 course. Do not add a second row for the same date to request fallback; it is
@@ -100,9 +142,9 @@ automatic from the single preferred course and time.
 For `20261111,TEE 1 ROSA,08:30,2,100001,,`:
 
 1. Select Rosa, 18 holes, and two players. Consider only actual offered times in **07:00 through 10:00**, inclusive, skipping disabled options, placeholders, and insufficient places.
-2. Choose the closest eligible Rosa time; earlier wins an equal-distance tie. With Rosa's 08:00 start and ten-minute grid, the order is `08:30`, `08:20`, `08:40`, `08:10`, `08:50`, `08:00`, `09:00`, `09:10`, `09:20`, `09:30`, `09:40`, `09:50`, `10:00`, considering only those actually offered and eligible.
-3. Only if Rosa has no eligible time, switch to Amarillo with fresh filters and the **same original 08:30 preference and 07:00-10:00 window**. With Amarillo's 08:05 start and ten-minute grid, the order is `08:25`, `08:35`, `08:15`, `08:45`, `08:05`, `08:55`, `09:05`, `09:15`, `09:25`, `09:35`, `09:45`, `09:55`, again considering only eligible offered times.
-4. Reserve the selected slot. If neither course has a suitable time, report failure without clicking BLOQUEAR. A failure during BLOQUEAR or RESERVAR does **not** trigger another course or reservation attempt.
+2. Choose the closest eligible Rosa time; earlier wins an equal-distance tie. For example, if `08:20`, `08:30` and `08:40` are offered and eligible, choose `08:30`; if only `08:20` and `08:40` remain, choose `08:20`. No official opening time or fixed ten-minute grid is assumed.
+3. Only if Rosa has no eligible time, switch to Amarillo with fresh filters and the **same original 08:30 preference and 07:00-10:00 window**. If Amarillo offers eligible `08:25` and `08:35`, choose `08:25`.
+4. Reserve the selected slot. If both checked courses have confirmed unavailability, report Unavailable without clicking BLOQUEAR. Loading/API failures are Technical Failure, not a reason to switch or retry. A failure during BLOQUEAR or RESERVAR does **not** trigger another course or reservation attempt.
 
 **Course preference comes before time proximity:** an available Rosa 10:00
 is selected ahead of Amarillo 08:25. If Rosa has no suitable slot and Amarillo
@@ -166,7 +208,9 @@ availability observation. Failed inspections retain valid earlier course snapsho
 Responses completed before observer installation cannot be reconstructed: an empty
 dropdown without that evidence is conservatively a technical failure. Readable
 non-empty options can still be used if there is no observed response; any observed
-response must agree with them. This change does not add booking retries or waits.
+response must agree with them. No booking retry is added. At the three-second
+time-dropdown deadline, only a matching pending request can receive one bounded
+extra second; details are in [Form readiness](#form-readiness-and-validation).
 
 Tee-time readiness, matching, snapshots, selected-time reporting and email labels
 now use the existing DOM-text fallback when Selenium returns blank text. The time
@@ -290,7 +334,7 @@ Testing the HTTP request launches the **real booking workflow**. Test only on an
 1. Check cron-job.org's execution history. A successful dispatch normally returns **HTTP 204 No Content**; an empty response is expected.
 2. Open **GitHub → Actions → TeeOne booking (scheduled)** and confirm a new run appeared on `main`.
 3. Check that the late-start guard passed and the **Wait until pre-build window** step waits until 19:35 (or reports that the time has already passed).
-4. Check the eventual GitHub run result and booking email. Scheduler success only confirms dispatch; it does not monitor the later Actions job or reservation.
+4. Check the saved report and dashboard outcome, plus the booking email when a booking row exists. Availability-only runs intentionally send no email. Scheduler success only confirms dispatch; it does not monitor the later Actions job or reservation.
 
 For a rejected request, check the token's validity, repository selection, Actions permission, workflow filename, branch, and JSON body. If a request times out, inspect GitHub Actions before retrying. For a late-start email, inspect the runner's start time; repeatedly dispatching cannot recover the missed booking window.
 
@@ -327,7 +371,7 @@ When you click **Run workflow**, you can set:
 | Input | Default | Meaning |
 |--------|---------|--------|
 | **skip_madrid_time_wait** | `true` (checked) | If **true**: bypass the 19:35 wait, late-start check, and internal Europe/Madrid waits (see [Time window](#time-window-europemadrid)); the flow runs as soon as the JAR starts. If **false**: enforce the 19:57 cutoff and use the production waits. External schedulers must explicitly pass **false**. |
-| **target_date_offset_days** | `2` | `0` = today, `1` = tomorrow, `2` = in two days — for **which sheet row** and, when the sheet’s **Fecha** is empty, the booking URL date. External schedulers should pass **2**. |
+| **target_date_offset_days** | `2` | `0` = today, `1` = tomorrow, `2` = in two days. Determines the sheet play-date row and the inspection/booking date. External schedulers should pass **2**. |
 
 The workflow maps these to process environment variables for the JAR:
 
@@ -343,7 +387,7 @@ The workflow maps these to process environment variables for the JAR:
 
 ## Target date
 
-- **Default:** `LocalDate.now()` + **`BOOKING_TARGET_DATE_OFFSET_DAYS`** (default **2** days) — used to find the **Google Sheet** row and, when the row has no **Fecha**, to build the inscripción URL date.
+- **Default:** `LocalDate.now()` + **`BOOKING_TARGET_DATE_OFFSET_DAYS`** (default **2** days). The matching sheet row supplies the booking date; if there is no matching row, availability inspection uses the resolved target date. Confirm the runtime's calendar date near midnight; the final booking waits and report timestamps use Europe/Madrid.
 - **Override:** set `BOOKING_TARGET_DATE_OFFSET_DAYS` in `.env` or, on GitHub, via the **target_date_offset_days** dispatch input.
 
 ## Time window (Europe/Madrid)
@@ -379,24 +423,35 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 ## Flow (summary)
 
 1. Load configuration; resolve **target date** and read the matching **Google Sheet** row.
-2. (Unless skipped) **Wait** until the configured **Europe/Madrid** instants, then open the inscripción URL, log in, and wait for **Recorrido**.
-3. Fill **Recorrido** (with waits for options/AJAX), **Número de hoyos**, **Jugadores**, **Hora de juego**; then **BLOQUEAR**, add socios, **RESERVAR**.
-4. Save the structured result before sending email; include **Hora de juego** option labels in the email if that step ran.
-5. On GitHub Actions, back up the saved report and publish its allowlisted data to the public dashboard. Notification or publication failures do not retry the booking.
+2. If there is no row but valid sheet headers, inspect Rosa, Amarillo and offered Verde for two players and 18 holes; never select a time or reserve. Sheet/configuration failures remain technical.
+3. For either browser path, apply the configured **Europe/Madrid** waits unless bypassed, open the date's page, log in, and install the passive availability-response observer.
+4. For a booking row, fill **Recorrido**, **Número de hoyos**, **Jugadores**, **Hora de juego**; select an eligible time, click **BLOQUEAR**, verify additional socios, then **RESERVAR**.
+5. Save the structured result before any booking email; include the last inspected time-option labels when available. Availability-only runs do not email. Diagnostic rechecks preserve initial snapshots and do not retry reservations.
+6. On GitHub Actions, back up the saved report and publish its allowlisted data to the public dashboard. Notification or publication failures do not retry the booking.
 
 ### Form readiness and validation
 
 Each dropdown is re-found every 200 ms until it is visible, enabled, and contains
 an enabled matching option. Recorrido allows up to 25 seconds; Número de hoyos
 and Jugadores allow 15 seconds. Hora de juego allows 3 seconds for an enabled,
-nonblank option other than the `-1` placeholder, then applies the existing time
-and player-count preferences. An empty-dropdown timeout is reported separately
-from a populated list with no matching time. BLOQUEAR waits up to 15 seconds
+nonblank option other than the `-1` placeholder, reading DOM text if needed.
+At that deadline, a matching pending availability request receives **at most one
+additional second**, polled every 100 ms. The extension stops when that same
+request completes; it does not issue another request, reload the page or select
+a tee time. Completed-empty, failed, missing or unmatched responses do not get
+an extension. The normal dropdown polling interval remains 200 ms.
+
+If the extended response supplies times and the dropdown is ready, selection
+continues. A successful open-system response with zero times permits confirmed
+unavailability. A still-pending, failed, closed-system, changed-request or
+inconsistent result is Technical Failure. There is no repeated extension.
+The existing time and player-count preferences then apply. BLOQUEAR waits up to 15 seconds
 to become visible and enabled before a normal Selenium click.
 
-The three-second time-dropdown limit applies on each course. It speeds up
-fallback from an empty list, but a preferred course whose times arrive later
-than that limit may be skipped. The separate AJAX waits are unchanged.
+The three-second budget, plus the conditional one-second extension, applies per
+course after the separate filter/AJAX waits. It is not a four-second wait on every
+course and does not guarantee late-loaded times will be captured. All Madrid-time,
+filter/AJAX and reservation-control waits are otherwise unchanged.
 
 Time selection ranks the actual offered slots within **90 minutes before or
 after the sheet's Horario, inclusive**: closest first, earlier first on a tie.
@@ -406,7 +461,7 @@ the existing same-time preference for plain times, then `(4)`, `(3)`, `(2)`
 for Verde.
 
 The requested course always takes priority. Only if it has no suitable time
-(including a usable dropdown remaining empty or all-disabled after the wait),
+(including an empty list confirmed by the successful availability response),
 **ROSA falls back to AMARILLO, and AMARILLO to ROSA**. The other course gets
 fresh course/hole/player selections and the same original Horario and
 90-minute window. Thus requested Rosa at 08:30 can select Rosa at 10:00 before
@@ -415,14 +470,18 @@ Success emails report the actual selected course and time in both subject and
 booking details. The option list is from the last course inspected.
 
 The post-Recorrido AJAX wait remains, with another wait after the player filter.
-These checks do not guarantee
-that an already-populated dropdown reflects the latest server response, or
-that no overlay covers BLOQUEAR. Course fallback is availability-only and
+Observed responses must match the current course, holes, players and play date;
+pending/failed responses and API/DOM inconsistencies stop the booking. Readable
+options without observed response evidence are still usable, so checks cannot
+prove every page value is current or that no overlay covers BLOQUEAR.
+Course fallback is availability-only and
 occurs before BLOQUEAR. Other errors and failures or uncertain results during
 BLOQUEAR or RESERVAR do not trigger another course or reservation attempt.
 
-Run `mvn test` for mock-only regression tests, or
-`mvn clean package assembly:single` to also build the production JAR. The
+Run `mvn -B clean test`, then
+`node --test src/test/resources/availability-observer.test.cjs` for mock-only
+Java and exact observer-script regressions, or use
+`mvn -B clean package assembly:single` to also build the production JAR. The
 **Validate booking automation** workflow runs this build for PRs and pushes to
 main without credentials, email, or a live booking. Future booking dispatches
 check out main and rebuild the JAR. To roll back a merged change, use the PR's
@@ -507,7 +566,8 @@ time-to-block and time-to-confirm KPIs. Older reports remain supported by
 reconstructing form start from confirmation time minus saved booking duration.
 The dashboard's not-bookable count means times absent from the dropdown relative
 to the observed reference, not listed options with insufficient capacity, and it
-does not identify who booked an absent time. No booking or email behavior changes.
+does not identify who booked an absent time. Reporting and publication never
+initiate a reservation retry.
 
 Outcomes are `Confirmed`, `Unavailable`, `Technical failure`, or `Informational`.
 Any submission attempt without an observed success message is `Technical failure`,
@@ -537,21 +597,31 @@ The scheduled workflow backs up the JSON as a `booking-result-*` artifact for
 The persistent public history is hosted at
 https://nicokiki.github.io/java-prat-booking-dashboard/.
 
-### Rollout status (2026-11-14)
+### Dashboard analysis
 
-**Steps 1-6 are complete; Step 7 is pending.**
+The public integration is active and the archive contains real saved executions;
+the former empty-archive rollout checkpoint is no longer current. Publication
+and Pages deployment remain best-effort and must be checked for each run.
 
-1. **Public-data scope:** approved public booking details, names, and licencias; credentials and screenshots are excluded from reports.
-2. **Dashboard setup:** created the public dashboard repository and enabled GitHub Pages.
-3. **Structured results:** implemented outcomes, Madrid timestamps, participants, and observed availability, saved before email.
-4. **Publication pipeline:** implemented artifact backup and allowlisted, execution-ID-based publication; `DASHBOARD_PUBLISH_TOKEN` is configured in this repository's Actions secrets.
-5. **Real-data dashboard:** replaced fictional records with saved JSON and pushed both integrations to `main`. Booking integration commit: `ff61a48`; dashboard integration commit: `78e99ee`.
-6. **Safe validation:** local Java and publisher tests, the Java-to-publisher dry-run, and the final JAR build passed. The [no-booking check](https://github.com/nicokiki/java-prat-booking/actions/runs/43621477702) and [Pages deployment](https://github.com/nicokiki/java-prat-booking-dashboard/actions/runs/43621458180) succeeded. No real booking or email was triggered for these checks.
-7. **Pending:** verify the next normal scheduled booking and its published result using the checklist below. The token's actual write access has not yet been exercised.
+The confirmation rate uses booking runs with a requested time, excluding
+Informational runs and failures before preferences were loaded. Timing medians
+use Confirmed cases only: form start to BLOQUEAR and form start to confirmation,
+with separate sample counts and no substitution of workflow startup time.
 
-At this checkpoint, the public archive is empty, as expected. No fictional
-records were published, and no extra booking or availability-only schedule was
-added for verification.
+Member-view availability uses the **earliest saved snapshot per course and play
+date**, for two players and 18 holes, so retries do not add sample days. A later
+manual execution can contain times that do not appear in that daily snapshot;
+select the execution in history to inspect its own observations. Friday/weekend
+groups use play dates, not execution dates.
+
+Not bookable means **not listed in the dropdown**, excluding listed options with
+limited capacity. The reference is the historical union of observed times for
+the same course/player/hole settings and selected time window, not an official
+club timetable. It can grow as more times are observed. Never-observed times
+cannot be counted, missing-course observations are not empty dropdowns, and
+unknown counts are not zero. Capture times vary; a snapshot is not all-day
+availability and does not identify purchasers or allocation reasons. CSV export
+records the calculation's capture times, execution IDs and reference provenance.
 
 ### Publishing setup
 
@@ -567,16 +637,19 @@ added for verification.
   publishing fails, the saved report remains in the artifact; no booking retry
   is performed.
 
-### Safe validation and first-run verification
+### Safe validation and execution verification
 
-Run `mvn -B clean test` and `python3 .github/scripts/test_publish_dashboard.py`
+Run `mvn -B clean test`, `node --test src/test/resources/availability-observer.test.cjs`,
+`python3 .github/scripts/test_publish_dashboard.py` and
+`python3 .github/scripts/test_delete_dashboard_execution.py`
 locally, or dispatch **Dashboard publishing check (no booking)**. That workflow
-runs mocked report tests and fixture publisher tests, then validates the exact
-Java-generated fixture against the dashboard archive with a publisher dry-run;
+runs mocked report, conditional-wait, observer and publisher/deletion tests, then
+validates the exact Java-generated booking and Informational fixtures against
+the dashboard archive with publisher dry-runs;
 it does not open TeeOne, send email, or push fixture data. Publisher dry-run:
 `python3 .github/scripts/publish_dashboard.py REPORT_JSON DASHBOARD_REPO --dry-run`.
 
-**Step 7: verify the next normal scheduled booking, not an extra test booking.**
+**Verify each normal scheduled execution; do not launch an extra booking just to test reporting.**
 
 1. Confirm the `booking-result-*` artifact contains the saved execution report.
 2. Check the dashboard checkout and publication steps, confirming that the configured token can write to the dashboard repository. Publication is best-effort, so a green workflow alone does not prove publication succeeded.
@@ -584,7 +657,8 @@ it does not open TeeOne, send email, or push fixture data. Publisher dry-run:
 4. Check participants' names and licencias, ensuring missing identities remain unrecorded, and compare course snapshots with the saved report.
 5. Confirm Pages serves the new record after deployment. For an uncertain result, inspect existing TeeOne reservations before any recovery attempt; do not rerun the booking merely to test publication.
 
-A green workflow alone is not proof of booking.
+A green workflow alone is not proof of booking; use the saved outcome and
+confirmation evidence. An Informational run is not a booking attempt.
 If the runner is stopped before it saves a report, no booking claim is published.
 This change does not schedule availability-only runs. History comparisons need
 repeated observations for the same play date, player count, and 18 holes.
@@ -612,7 +686,12 @@ Never place a GitHub token in the dashboard's JavaScript.
 
 ## Troubleshooting
 
-- **No slots / BLOQUEAR disabled** — the club may show “no availability”; fix date, recorrido, and jugadores on the real site; automation cannot invent tee times.
+- **No listed times:** inspect the safe availability-response log. Only a matching successful open-system response with zero times confirms an empty observation. Closed systems, API errors, malformed labels and unresolved loading are technical failures; the automation cannot invent times.
+- **Conditional extra second:** look for `matching availability request ... still pending after 3 seconds`, followed by the completed response or `remains pending after the one-second extension`. Missing or completed responses receive no extra wait.
+- **Times visible in a later run but not the daily dashboard:** Member-view availability uses the earliest snapshot for that play date; inspect the later execution's details instead.
+- **Wrong play date or unexpected Informational result:** check `BOOKING_TARGET_DATE_OFFSET_DAYS`, runtime date, exact Sheet headers and the target-date row. A manual wait bypass changes execution timing, not whether a run can reserve.
 - **Chrome / headless** — ensure Chrome is installed; set `HEADLESS=false` to watch the browser.
 - **Selectors** — if TeeOne’s HTML changes, update `TeeOneAutomation.java`.
 - **Sheet tab** — if not `Sheet1!A:Z`, set `GOOGLE_SHEET_RANGE` in secrets / `.env`.
+- **Unconfirmed submission:** check TeeOne's existing reservations before recovery. Do not blindly dispatch again; neither email nor publication failures justify another booking.
+- **Diagnostics and privacy:** request tokens, member IDs and raw responses are excluded from availability logs. Public execution reports may include approved participant names/licences; email screenshots can be private. Never share credentials or raw page HTML to troubleshoot.
