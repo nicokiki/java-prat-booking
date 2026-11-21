@@ -122,6 +122,37 @@ ten-minute grid is assumed.
 3. Locally: e.g. `credentials/google-service-account.json`
 4. **Share the sheet** with the service account email (at least Viewer)
 
+## Empty Tee-Time Diagnostics
+
+An empty saved snapshot means zero recognized tee-time labels, not necessarily
+zero raw dropdown options. Empty reads now write `Tee-time diagnostic` entries
+to the application log with `phase=initial-empty`, a Madrid capture timestamp,
+raw and enabled option counts, blank Selenium label count, DOM time-label count,
+dropdown visibility/enabled state, actual selected course/holes/player filters,
+and the observed `jQuery.active` value when available. Time-label details are
+limited to 100 options; counts still cover the entire dropdown. Non-time text
+and opaque option values are excluded, as are full HTML, credentials and member
+identities. `jqueryActive=not-present` is not evidence that all requests are idle.
+
+After the initial availability inspection finishes, or both booking courses fail
+to provide an eligible time, empty courses receive one diagnostic-only recheck.
+There is one 15-second pause, then each empty course's filters are reapplied and
+the observer waits up to 10 seconds for recognizable time labels, using the DOM
+text fallback as well as Selenium text. Logs use `phase=delayed-read-only` and a
+new timestamp. A diagnostic failure does not replace the original booking error.
+
+Rechecks never choose a tee time, click BLOQUEAR, add players or submit RESERVAR.
+They do not run after a time was selected, blocked or submitted, and do not add
+waits to the normal booking/fallback path. Initial public snapshots and outcomes
+are retained, without adding duplicate course entries to dashboard calculations.
+The extra diagnostic observations are in the Actions log, not the public archive
+or CSV. Failed/Informational runs can consequently finish later, including any
+subsequent failure notification; successful bookings do not wait for rechecks.
+
+Compare initial and delayed counts to distinguish blank Selenium text with DOM
+times present, later-loaded times, and persistently unrecognized/absent times.
+These observations alone cannot establish why TeeOne returned no times.
+
 ## Local environment
 
 ```bash

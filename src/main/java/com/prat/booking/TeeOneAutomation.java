@@ -61,6 +61,8 @@ public class TeeOneAutomation {
     private String selectedHoraDeJuego;
     private String selectedRecorrido;
     private final List<Map<String, Object>> availabilitySnapshots = new ArrayList<>();
+    private Duration diagnosticRecheckDelay = Duration.ofSeconds(15);
+    private Duration diagnosticObservationTimeout = Duration.ofSeconds(10);
     private final Map<String, String> observedSocioNames = new LinkedHashMap<>();
     private boolean reservationSubmitted;
     private boolean bookingUnavailable;
@@ -155,7 +157,12 @@ public class TeeOneAutomation {
             return;
         }
         bookingFormStartedAt = ZonedDateTime.now(madrid);
-        fillBookingForm(data);
+        try {
+            fillBookingForm(data);
+        } catch (NoSuitableTeeTimeException unavailable) {
+            recheckEmptyAvailability();
+            throw unavailable;
+        }
         captureBookingHolder();
         addSocios(data);
         confirmReservation();
@@ -341,7 +348,94 @@ public class TeeOneAutomation {
                 log.warn("Could not inspect availability for {}", course);
             }
         }
+        recheckEmptyAvailability();
         if (failure != null) throw failure;
+    }
+
+    private void recheckEmptyAvailability() {
+        if (driver == null || reservationSubmitted || reservationBlockedAt != null || selectedHoraDeJuego != null) return;
+        Map<String, Integer> emptyCourses = new LinkedHashMap<>();
+        for (Map<String, Object> snapshot : availabilitySnapshots) {
+            if (snapshot.get("options") instanceof List<?> options && options.isEmpty()
+                    && snapshot.get("course") instanceof String course && !course.isBlank()
+                    && snapshot.get("players") instanceof Integer players) {
+                emptyCourses.putIfAbsent(course, players);
+            }
+        }
+        if (emptyCourses.isEmpty()) return;
+        String originalCourse = selectedRecorrido;
+        String originalTime = selectedHoraDeJuego;
+        String originalOptions = horaDeJuegoDropdownOptions;
+        try {
+            log.info("Empty tee-time observations: waiting {} seconds for diagnostic-only rechecks; booking will not be retried",
+                    diagnosticRecheckDelay.toSeconds());
+            sleep(diagnosticRecheckDelay);
+            for (Map.Entry<String, Integer> course : emptyCourses.entrySet()) {
+                try {
+                    selectCourseFilters(course.getKey(), course.getValue());
+                    awaitDiagnosticTeeTimes();
+                    logTeeTimeDiagnostics(course.getValue(), "delayed-read-only");
+                } catch (RuntimeException exception) {
+                    log.warn("Diagnostic tee-time recheck failed for {}; original outcome and snapshots retained", course.getKey());
+                }
+            }
+        } catch (RuntimeException exception) {
+            log.warn("Diagnostic tee-time rechecks interrupted; original outcome and snapshots retained");
+        } finally {
+            selectedRecorrido = originalCourse;
+            selectedHoraDeJuego = originalTime;
+            horaDeJuegoDropdownOptions = originalOptions;
+        }
+    }
+
+    private void awaitDiagnosticTeeTimes() {
+        try {
+            new WebDriverWait(driver, diagnosticObservationTimeout)
+                    .pollingEvery(Duration.ofMillis(200))
+                    .ignoring(StaleElementReferenceException.class)
+                    .until(current -> {
+                        WebElement dropdown = findSelectByLabelOrName("Hora de juego");
+                        if (dropdown == null || !dropdown.isDisplayed() || !dropdown.isEnabled()) return false;
+                        return new Select(dropdown).getOptions().stream().anyMatch(option -> {
+                            String text = diagnosticTimeLabel(optionVisibleText(option));
+                            return !"-1".equals(option.getAttribute("value"))
+                                    && !"blank".equals(text) && !"non-time".equals(text);
+                        });
+                    });
+        } catch (TimeoutException exception) {
+            log.info("Diagnostic tee-time wait ended after {} seconds without recognizable times on {}",
+                    diagnosticObservationTimeout.toSeconds(), selectedRecorrido);
+        }
+    }
+
+    private void logTeeTimeDiagnostics(int players, String phase) {
+        try {
+            WebElement dropdown = findSelectByLabelOrName("Hora de juego");
+            if (dropdown == null) {
+                log.warn("Tee-time diagnostic: phase={} course={} dropdown missing", phase, selectedRecorrido);
+                return;
+            }
+            Map<String, Object> diagnostic = teeTimeOptionDiagnostics(new Select(dropdown).getOptions());
+            diagnostic.put("phase", phase);
+            diagnostic.put("capturedAt", ZonedDateTime.now(ZoneId.of("Europe/Madrid"))
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+            diagnostic.put("course", selectedRecorrido);
+            diagnostic.put("expectedPlayers", players);
+            diagnostic.put("displayed", dropdown.isDisplayed());
+            diagnostic.put("enabled", dropdown.isEnabled());
+            Map<String, String> filters = new LinkedHashMap<>();
+            for (String filter : List.of("Recorrido", "Número de hoyos", "Jugadores")) {
+                WebElement element = findSelectByLabelOrName(filter);
+                String label = element == null ? "" : optionVisibleText(new Select(element).getFirstSelectedOption());
+                filters.put(filter, label.matches("(?i)TEE ?1 (ROSA|AMARILLO|VERDE)|18|9|[1-4]") ? label : "unexpected-or-missing");
+            }
+            diagnostic.put("selectedFilters", filters);
+            Object active = ((JavascriptExecutor) driver).executeScript("return window.jQuery ? window.jQuery.active : null;");
+            diagnostic.put("jqueryActive", active == null ? "not-present" : active instanceof Number ? active : "unavailable");
+            log.info("Tee-time diagnostic: {}", diagnostic);
+        } catch (RuntimeException exception) {
+            log.warn("Tee-time diagnostic unavailable: phase={} course={}; original outcome retained", phase, selectedRecorrido);
+        }
     }
 
     private String alternateRecorrido(String recorrido) {
@@ -963,6 +1057,44 @@ public class TeeOneAutomation {
         return reservationScreenshot == null ? null : reservationScreenshot.clone();
     }
 
+    private Map<String, Object> teeTimeOptionDiagnostics(List<WebElement> options) {
+        List<Map<String, Object>> labels = new ArrayList<>();
+        int blankVisible = 0;
+        int domTimes = 0;
+        int enabled = 0;
+        for (WebElement option : options) {
+            String visible = diagnosticTimeLabel(option.getText());
+            String dom = diagnosticTimeLabel(option.getAttribute("textContent"));
+            if ("blank".equals(dom)) dom = diagnosticTimeLabel(option.getAttribute("innerText"));
+            if ("blank".equals(visible)) blankVisible++;
+            if (!"blank".equals(dom) && !"non-time".equals(dom)
+                    && !"-1".equals(option.getAttribute("value"))) domTimes++;
+            if (option.isEnabled()) enabled++;
+            if (labels.size() < 100) {
+                Map<String, Object> label = new LinkedHashMap<>();
+                label.put("visibleText", visible);
+                label.put("domText", dom);
+                label.put("placeholder", "-1".equals(option.getAttribute("value")));
+                label.put("enabled", option.isEnabled());
+                labels.add(label);
+            }
+        }
+        Map<String, Object> diagnostic = new LinkedHashMap<>();
+        diagnostic.put("rawOptionCount", options.size());
+        diagnostic.put("enabledOptionCount", enabled);
+        diagnostic.put("blankVisibleTextCount", blankVisible);
+        diagnostic.put("domTimeCount", domTimes);
+        diagnostic.put("options", labels);
+        return diagnostic;
+    }
+
+    private String diagnosticTimeLabel(String text) {
+        if (text == null || text.isBlank()) return "blank";
+        String normalized = text.trim().replaceAll("\\s+", " ");
+        return normalized.matches("(?:[01]?\\d|2[0-3]):[0-5]\\d(?: ?\\(\\d{1,3}\\))?")
+                ? normalized : "non-time";
+    }
+
     private void captureAvailability(List<WebElement> options, int players) {
         List<Map<String, Object>> offered = new ArrayList<>();
         Pattern labelPattern = Pattern.compile("^(\\d{1,2}:\\d{2})(?:\\s*\\((\\d+)\\))?$");
@@ -984,6 +1116,7 @@ public class TeeOneAutomation {
         snapshot.put("holes", 18);
         snapshot.put("options", offered);
         availabilitySnapshots.add(snapshot);
+        if (offered.isEmpty()) logTeeTimeDiagnostics(players, "initial-empty");
     }
 
     private void captureAvailabilityBestEffort(List<WebElement> options, int players) {

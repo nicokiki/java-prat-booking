@@ -42,6 +42,12 @@ public class TeeOneAutomationTest {
         Field driverField = TeeOneAutomation.class.getDeclaredField("driver");
         driverField.setAccessible(true);
         driverField.set(automation, driver);
+        Field recheckDelay = TeeOneAutomation.class.getDeclaredField("diagnosticRecheckDelay");
+        recheckDelay.setAccessible(true);
+        recheckDelay.set(automation, Duration.ZERO);
+        Field observationTimeout = TeeOneAutomation.class.getDeclaredField("diagnosticObservationTimeout");
+        observationTimeout.setAccessible(true);
+        observationTimeout.set(automation, Duration.ZERO);
     }
 
     @Test
@@ -66,7 +72,114 @@ public class TeeOneAutomationTest {
     }
 
     @Test
-    public void hoyosWaitsForRequestedOption() throws Exception {
+    public void emptyReadDiagnosticsDistinguishBlankVisibleTextFromDomTimes() throws Exception {
+        WebElement hiddenLabel = option("", "opaque-slot-id");
+        when(hiddenLabel.getAttribute("textContent")).thenReturn("08:25 (4)");
+        WebElement placeholder = option("Choose", "-1");
+        WebElement unexpected = option("Private fixture name", "sensitive-fixture-value");
+        when(unexpected.getAttribute("textContent")).thenReturn("Private fixture name");
+
+        var diagnostic = (java.util.Map<?, ?>) invoke("teeTimeOptionDiagnostics", new Class<?>[]{List.class},
+                List.of(placeholder, hiddenLabel, unexpected));
+
+        assertEquals(3, diagnostic.get("rawOptionCount"));
+        assertEquals(1, diagnostic.get("blankVisibleTextCount"));
+        assertEquals(1, diagnostic.get("domTimeCount"));
+        assertTrue(diagnostic.toString().contains("08:25 (4)"));
+        assertFalse(diagnostic.toString().contains("Private fixture name"));
+        assertFalse(diagnostic.toString().contains("opaque-slot-id"));
+        assertFalse(diagnostic.toString().contains("sensitive-fixture-value"));
+        var bounded = (java.util.Map<?, ?>) invoke("teeTimeOptionDiagnostics", new Class<?>[]{List.class},
+            java.util.Collections.nCopies(125, hiddenLabel));
+        assertEquals(125, bounded.get("rawOptionCount"));
+        assertEquals(125, bounded.get("domTimeCount"));
+        assertEquals(100, ((List<?>) bounded.get("options")).size());
+        verify(hiddenLabel, never()).click();
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+    }
+
+        @Test
+        public void delayedEmptyRecheckReadsNewOptionsWithoutSelectingOrChangingSnapshots() throws Exception {
+            WebElement lateTime = option("", "late-slot");
+            when(lateTime.getAttribute("textContent")).thenReturn("08:25 (4)");
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(lateTime),
+            "TEE 1 AMARILLO", dropdown(option("08:35 (2)", "other-slot")));
+        Field course = TeeOneAutomation.class.getDeclaredField("selectedRecorrido");
+        course.setAccessible(true);
+        course.set(automation, "TEE 1 ROSA");
+        invoke("captureAvailability", new Class<?>[]{List.class, int.class}, List.of(), 2);
+        course.set(automation, "TEE 1 AMARILLO");
+
+        invoke("recheckEmptyAvailability", new Class<?>[]{});
+
+        verify(lateTime, never()).click();
+        verify(bloquear, never()).click();
+        verify(lateTime, atLeastOnce()).getText();
+        assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+        assertEquals(1, automation.getAvailabilitySnapshots().size());
+        assertEquals(List.of(), automation.getAvailabilitySnapshots().get(0).get("options"));
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getReservationBlockedAt());
+        assertNull(automation.getSelectedHoraDeJuego());
+        verify(driver, never()).findElement(By.id("EnviarInscripcion"));
+
+        doThrow(new WebDriverException("Fixture diagnostic failure")).when(driver).findElement(By.id("Recorrido"));
+        invoke("recheckEmptyAvailability", new Class<?>[]{});
+        assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+        assertEquals(List.of(), automation.getAvailabilitySnapshots().get(0).get("options"));
+        verify(bloquear, never()).click();
+        }
+
+        @Test
+    public void failedBookingRechecksOnlyAfterBothCoursesAndNeverRetriesReservation() throws Exception {
+        WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(option("Choose", "-1")),
+                "TEE 1 AMARILLO", dropdown(option("Choose", "-1")));
+        WebElement courses = driver.findElement(By.id("Recorrido"));
+        List<WebElement> courseOptions = new org.openqa.selenium.support.ui.Select(courses).getOptions();
+        Field initialized = TeeOneAutomation.class.getDeclaredField("initialized");
+        initialized.setAccessible(true);
+        initialized.set(automation, true);
+
+        try (var config = mockStatic(Config.class)) {
+            config.when(Config::skipMadridTimeWait).thenReturn(true);
+            NoSuchElementException failure = assertThrows(NoSuchElementException.class, () -> automation.performBooking(
+                    new BookingData("20261122", "TEE 1 ROSA", "13:00", 2, List.of())));
+            assertTrue(failure.getMessage().contains("Timed out after 3 seconds"));
+            assertEquals(1, failure.getSuppressed().length);
+        }
+
+        verify(courseOptions.get(0), times(2)).click();
+        verify(courseOptions.get(1), times(2)).click();
+        verify(bloquear, never()).click();
+        assertEquals(2, automation.getAvailabilitySnapshots().size());
+        assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
+        assertNull(automation.getSelectedHoraDeJuego());
+        assertFalse(automation.isReservationSubmitted());
+        verify(driver, never()).findElement(By.id("EnviarInscripcion"));
+    }
+
+    @Test
+        public void delayedEmptyRecheckDoesNotRunAfterBlockingOrSubmission() throws Exception {
+        Field course = TeeOneAutomation.class.getDeclaredField("selectedRecorrido");
+        course.setAccessible(true);
+        course.set(automation, "TEE 1 ROSA");
+        invoke("captureAvailability", new Class<?>[]{List.class, int.class}, List.of(), 2);
+        Field blocked = TeeOneAutomation.class.getDeclaredField("reservationBlockedAt");
+        blocked.setAccessible(true);
+        blocked.set(automation, ZonedDateTime.now());
+        clearInvocations(driver);
+        invoke("recheckEmptyAvailability", new Class<?>[]{});
+        verifyNoInteractions(driver);
+        blocked.set(automation, null);
+        Field submitted = TeeOneAutomation.class.getDeclaredField("reservationSubmitted");
+        submitted.setAccessible(true);
+        submitted.set(automation, true);
+        invoke("recheckEmptyAvailability", new Class<?>[]{});
+        verifyNoInteractions(driver);
+        }
+
+        @Test
+        public void hoyosWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Número de hoyos", "Hoyos", "18", "1");
     }
 
