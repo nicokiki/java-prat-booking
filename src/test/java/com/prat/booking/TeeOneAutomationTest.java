@@ -39,6 +39,7 @@ public class TeeOneAutomationTest {
         driver = mock(WebDriver.class, withSettings().extraInterfaces(JavascriptExecutor.class, TakesScreenshot.class));
         when(driver.findElement(any(By.class))).thenThrow(new NoSuchElementException("Missing fixture element"));
         when(((JavascriptExecutor) driver).executeScript(anyString())).thenReturn(true);
+        when(((JavascriptExecutor) driver).executeScript(availabilityReadScript())).thenReturn(java.util.Map.of());
         Field driverField = TeeOneAutomation.class.getDeclaredField("driver");
         driverField.setAccessible(true);
         driverField.set(automation, driver);
@@ -53,6 +54,83 @@ public class TeeOneAutomationTest {
     @Test
     public void recorridoWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Recorrido", "Recorrido", "TEE 1 AMARILLO", "03");
+    }
+
+    @Test
+    public void emptyAvailabilityRequiresSuccessfulMatchingOpenSystemResponse() throws Exception {
+        doReturn(java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1, "systemOpen", true, "timeCount", 0))
+            .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        invoke("requireSuccessfulEmptyAvailability", new Class<?>[]{});
+        List<java.util.Map<String, Object>> invalid = List.of(
+                java.util.Map.of(),
+                java.util.Map.of("pending", true),
+                java.util.Map.of("pending", false, "httpStatus", 503, "apiCode", 1, "systemOpen", true, "timeCount", 0),
+                java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", -1, "systemOpen", true, "timeCount", 0),
+                java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1, "systemOpen", false, "timeCount", 0),
+                java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1, "systemOpen", true, "timeCount", 5));
+        for (var response : invalid) {
+            doReturn(response).when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+            assertThrows(IllegalStateException.class, () -> invoke("requireSuccessfulEmptyAvailability", new Class<?>[]{}));
+        }
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertFalse(automation.isBookingUnavailable());
+    }
+
+    @Test
+    public void apiFailureWithBlankDropdownIsTechnicalAndNotPublishedAsEmptyAvailability() throws Exception {
+        doReturn(dropdown(option("", "-1"))).when(driver).findElement(By.id("HoraJuego"));
+        doReturn(java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", -1,
+                "systemOpen", true, "timeCount", 0)).when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        assertThrows(IllegalStateException.class, () -> invoke("selectHoraDeJuego",
+                new Class<?>[]{String.class, int.class}, "13:00", 2));
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertFalse(automation.isBookingUnavailable());
+        assertNull(automation.getReservationBlockedAt());
+    }
+
+    @Test
+        public void apiTimesWithUnparseableLabelsAreTechnicalAndDoNotCreateEmptySnapshots() throws Exception {
+        doReturn(dropdown(option("unexpected label", "13:00"))).when(driver).findElement(By.id("HoraJuego"));
+        doReturn(java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1,
+            "systemOpen", true, "timeCount", 1)).when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        assertThrows(IllegalStateException.class, () -> invoke("selectHoraDeJuego",
+            new Class<?>[]{String.class, int.class}, "13:00", 2));
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertFalse(automation.isBookingUnavailable());
+        }
+
+        @Test
+    public void observerFixtureContainsOnlyPassiveRequestObservation() throws Exception {
+        Field script = TeeOneAutomation.class.getDeclaredField("INSTALL_AVAILABILITY_OBSERVER");
+        script.setAccessible(true);
+        String source = (String) script.get(null);
+        assertFalse(source.contains("$.ajax("));
+        assertFalse(source.contains("fetch("));
+        assertFalse(source.contains(".click("));
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target", "availability-observer-fixture.js"), source);
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target", "availability-read-fixture.js"), availabilityReadScript());
+    }
+
+    private String availabilityReadScript() throws Exception {
+        Field script = TeeOneAutomation.class.getDeclaredField("READ_AVAILABILITY_RESPONSE");
+        script.setAccessible(true);
+        return (String) script.get(null);
+    }
+
+    @Test
+    public void bookingReadsDomTimeWhenSeleniumLabelIsBlank() throws Exception {
+        WebElement time = option("", "08:35");
+        when(time.getAttribute("textContent")).thenReturn("08:35 (4)");
+        doReturn(dropdown(time)).when(driver).findElement(By.id("HoraJuego"));
+        invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "8:45", 2);
+        assertEquals("08:35", automation.getSelectedHoraDeJuego());
+        assertEquals("08:35 (4)", pickTime("8:45", 2, List.of(time)));
+        var captured = (List<?>) automation.getAvailabilitySnapshots().get(0).get("options");
+        assertEquals("08:35", ((java.util.Map<?, ?>) captured.get(0)).get("time"));
+        assertTrue(((String) invoke("formatHoraDeJuegoOptionsForEmail", new Class<?>[]{List.class}, List.of(time)))
+                .contains("08:35 (4)"));
+        assertNull(automation.getReservationBlockedAt());
+        assertFalse(automation.isReservationSubmitted());
     }
 
     @Test
@@ -254,6 +332,9 @@ public class TeeOneAutomationTest {
         doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
         WebElement empty = dropdown(option("Choose", "-1"));
         WebElement offered = dropdown(option("09:00 (2)", "09:00"));
+        doAnswer(invocation -> java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1,
+            "systemOpen", true, "timeCount", course.get().equals("TEE 1 ROSA") ? 0 : 1))
+            .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
         doAnswer(invocation -> course.get().equals("TEE 1 ROSA") ? empty : offered)
             .when(driver).findElement(By.id("HoraJuego"));
         invoke("inspectAllCourses", new Class<?>[]{});
@@ -321,6 +402,8 @@ public class TeeOneAutomationTest {
     public void emptyTimeDropdownFailsWithReadinessTimeout() throws Exception {
         WebElement dropdown = dropdown(option("", "-1"));
         doReturn(dropdown).when(driver).findElement(By.id("HoraJuego"));
+        doReturn(java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1, "systemOpen", true, "timeCount", 0))
+            .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
 
         try {
             invoke("selectHoraDeJuego", new Class<?>[]{String.class, int.class}, "8:45", 2);
@@ -414,6 +497,7 @@ public class TeeOneAutomationTest {
     public void dropdownDriverFailureDoesNotTryAnotherCourse() throws Exception {
         WebElement brokenOption = option("08:30 (4)", "08:30");
         when(brokenOption.getText()).thenThrow(new WebDriverException("Time options failed"));
+        when(brokenOption.getAttribute("innerText")).thenThrow(new WebDriverException("Time options failed"));
         WebElement bloquear = configureCourses("TEE 1 ROSA", dropdown(brokenOption),
                 "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
 
@@ -925,6 +1009,16 @@ public class TeeOneAutomationTest {
         doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
         doAnswer(invocation -> primary.equals(selectedCourse.get()) ? primaryTimes : alternateTimes)
                 .when(driver).findElement(By.id("HoraJuego"));
+        try {
+            doAnswer(invocation -> {
+                WebElement times = primary.equals(selectedCourse.get()) ? primaryTimes : alternateTimes;
+                long count = times.findElements(By.tagName("option")).stream()
+                        .filter(option -> !"-1".equals(option.getAttribute("value"))).count();
+                return java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1, "systemOpen", true, "timeCount", count);
+            }).when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        } catch (Exception exception) {
+            throw new AssertionError(exception);
+        }
         WebElement bloquear = mock(WebElement.class);
         when(bloquear.isDisplayed()).thenReturn(true);
         when(bloquear.isEnabled()).thenReturn(true);

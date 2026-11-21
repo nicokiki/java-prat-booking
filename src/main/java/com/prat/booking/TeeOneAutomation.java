@@ -45,6 +45,51 @@ public class TeeOneAutomation {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration PAGE_LOAD_WAIT = Duration.ofSeconds(3);
     private static final int MAX_TEE_TIME_DISTANCE_MINUTES = 90;
+    private static final String INSTALL_AVAILABILITY_OBSERVER = """
+            if (!window.jQuery) return false;
+            if (window.__pratAvailability) return true;
+            const state = {sequence: 0, latest: null};
+            const requests = new WeakMap();
+            const endpoint = '/api/Front/ReservasSocios/ObtenerHorasDisponiblesReservasSocios';
+            function filterKey(course, holes, players, date) {
+                if (!['02', '03', '04'].includes(String(course)) || !['1', '2'].includes(String(holes))
+                    || !['2', '3', '4'].includes(String(players)) || !/^\\d{4}\\/\\d{2}\\/\\d{2}$/.test(date)) return null;
+                return [String(course), String(holes), String(players), date].join('|');
+            }
+            state.currentKey = function() {
+                const value = id => document.getElementById(id)?.value || '';
+                const date = value('HidFechaJuego');
+                return filterKey(value('Recorrido'), value('Hoyos'), value('Plazas'),
+                    /^\\d{8}$/.test(date) ? date.slice(0, 4) + '/' + date.slice(4, 6) + '/' + date.slice(6, 8) : '');
+            };
+            window.jQuery(document).on('ajaxSend.pratAvailability', function(event, xhr, settings) {
+                if (!String(settings.url || '').split('?')[0].endsWith(endpoint)) return;
+                try {
+                    const input = typeof settings.data === 'string' ? JSON.parse(settings.data) : settings.data;
+                    const key = filterKey(input.idRecorrido, input.numHoyos, input.numJugadores, input.fechaJuego);
+                    if (!key || key !== state.currentKey()) return;
+                    const request = {key: key, requestId: ++state.sequence, pending: true};
+                    requests.set(xhr, request);
+                    state.latest = request;
+                } catch (error) { state.latest = null; }
+            });
+            window.jQuery(document).on('ajaxComplete.pratAvailability', function(event, xhr) {
+                const request = requests.get(xhr);
+                if (!request || request.requestId !== state.latest?.requestId) return;
+                const response = xhr.responseJSON;
+                const numeric = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
+                state.latest = {key: request.key, requestId: request.requestId, pending: false,
+                    httpStatus: numeric(xhr.status), apiCode: numeric(response?.res?.cod),
+                    timeCount: Array.isArray(response?.datos?.lista) ? response.datos.lista.length : null,
+                    systemOpen: typeof response?.datos?.sistemaAbierto === 'boolean' ? response.datos.sistemaAbierto : null};
+            });
+            window.__pratAvailability = state;
+            return true;
+            """;
+    private static final String READ_AVAILABILITY_RESPONSE = """
+            const state = window.__pratAvailability;
+            return state && state.latest && state.latest.key === state.currentKey() ? state.latest : null;
+            """;
 
     private WebDriver driver;
     private WebDriverWait wait;
@@ -148,6 +193,7 @@ public class TeeOneAutomation {
         sleep(PAGE_LOAD_WAIT);
 
         loginUntilRecorridoVisible(loginCompleteBy);
+        installAvailabilityObserver();
 
         // Start filling exactly at 20:00:01 Madrid time when possible.
         waitUntilMadrid(fillAt, "fillBookingForm");
@@ -310,15 +356,24 @@ public class TeeOneAutomation {
     private void selectCourseFilters(String recorrido, int players) {
         selectedHoraDeJuego = null;
         horaDeJuegoDropdownOptions = null;
+        installAvailabilityObserver();
         selectDropdown("Recorrido", recorrido);
         selectDropdown("Número de hoyos", "18");
         selectDropdown("Jugadores", String.valueOf(players));
         waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT);
     }
 
+    private void installAvailabilityObserver() {
+        try {
+            ((JavascriptExecutor) driver).executeScript(INSTALL_AVAILABILITY_OBSERVER);
+        } catch (RuntimeException exception) {
+            log.warn("Availability response observer unavailable; empty results will require confirmed response evidence");
+        }
+    }
+
     private void inspectAllCourses() {
         WebElement courseDropdown = waitUntilDropdownReady("Recorrido", option ->
-                !option.getText().isBlank() && !"-1".equals(option.getAttribute("value")), "available course options");
+            !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")), "available course options");
         boolean verdeOffered = new Select(courseDropdown).getOptions().stream().anyMatch(option ->
                 optionMatchesChoice(option, "TEE 1 VERDE", canonicalOptionLabel("TEE 1 VERDE"), compactOptionKey("TEE 1 VERDE")));
         IllegalStateException failure = null;
@@ -334,14 +389,17 @@ public class TeeOneAutomation {
                 WebElement dropdown;
                 try {
                     dropdown = waitUntilDropdownReady("Hora de juego", option ->
-                            !option.getText().isBlank() && !"-1".equals(option.getAttribute("value")),
+                            !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")),
                             "a nonblank, non-placeholder time option");
                 } catch (IllegalStateException exception) {
                     dropdown = findSelectByLabelOrName("Hora de juego");
                     if (!(exception.getCause() instanceof TimeoutException) || dropdown == null
                             || !dropdown.isDisplayed() || !dropdown.isEnabled()) throw exception;
+                    requireSuccessfulEmptyAvailability();
                 }
-                captureAvailability(new Select(dropdown).getOptions(), 2);
+                List<WebElement> options = new Select(dropdown).getOptions();
+                checkObservedAvailabilityResponse(options);
+                captureAvailability(options, 2);
             } catch (RuntimeException exception) {
                 if (failure == null) failure = new IllegalStateException("Availability inspection incomplete");
                 failure.addSuppressed(exception);
@@ -432,10 +490,52 @@ public class TeeOneAutomation {
             diagnostic.put("selectedFilters", filters);
             Object active = ((JavascriptExecutor) driver).executeScript("return window.jQuery ? window.jQuery.active : null;");
             diagnostic.put("jqueryActive", active == null ? "not-present" : active instanceof Number ? active : "unavailable");
+            diagnostic.put("availabilityResponse", availabilityResponse());
             log.info("Tee-time diagnostic: {}", diagnostic);
         } catch (RuntimeException exception) {
             log.warn("Tee-time diagnostic unavailable: phase={} course={}; original outcome retained", phase, selectedRecorrido);
         }
+    }
+
+    private Map<?, ?> availabilityResponse() {
+        try {
+            Object observed = ((JavascriptExecutor) driver).executeScript(READ_AVAILABILITY_RESPONSE);
+            if (observed instanceof Map<?, ?> response) return response;
+        } catch (RuntimeException exception) {
+            log.warn("Availability response evidence could not be read");
+        }
+        return Map.of();
+    }
+
+    private boolean successfulAvailabilityResponse(Map<?, ?> response) {
+        return Boolean.FALSE.equals(response.get("pending"))
+                && response.get("httpStatus") instanceof Number http && http.intValue() >= 200 && http.intValue() < 300
+                && response.get("apiCode") instanceof Number api && api.intValue() == 1
+                && Boolean.TRUE.equals(response.get("systemOpen"))
+                && response.get("timeCount") instanceof Number count && count.intValue() >= 0;
+    }
+
+    private void requireSuccessfulEmptyAvailability() {
+        Map<?, ?> response = availabilityResponse();
+        log.info("Availability response for empty dropdown on {}: {}", selectedRecorrido, response);
+        if (!successfulAvailabilityResponse(response)
+                || ((Number) response.get("timeCount")).intValue() != 0) {
+            throw new IllegalStateException("Empty tee-time dropdown without a matching successful open-system response with zero times");
+        }
+    }
+
+    private void checkObservedAvailabilityResponse(List<WebElement> options) {
+        Map<?, ?> response = availabilityResponse();
+        log.info("Availability response on {}: {}", selectedRecorrido, response);
+        boolean listed = options.stream().anyMatch(option -> {
+            String label = diagnosticTimeLabel(optionVisibleText(option));
+            return !"-1".equals(option.getAttribute("value")) && !"blank".equals(label) && !"non-time".equals(label);
+        });
+        if (!response.isEmpty() && (!successfulAvailabilityResponse(response)
+                || (((Number) response.get("timeCount")).intValue() > 0) != listed)) {
+            throw new IllegalStateException("Availability request is pending, failed, malformed, or the booking system is closed");
+        }
+        if (!listed) requireSuccessfulEmptyAvailability();
     }
 
     private String alternateRecorrido(String recorrido) {
@@ -564,19 +664,21 @@ public class TeeOneAutomation {
         WebElement selectEl;
         try {
             selectEl = waitUntilDropdownReady("Hora de juego",
-                    option -> !option.getText().isBlank()
+                    option -> !optionVisibleText(option).isBlank()
                             && !"-1".equals(option.getAttribute("value")),
                     "a nonblank, non-placeholder time option");
         } catch (IllegalStateException e) {
             WebElement dropdown = findSelectByLabelOrName("Hora de juego");
             if (e.getCause() instanceof TimeoutException && dropdown != null
                     && dropdown.isDisplayed() && dropdown.isEnabled()) {
-                captureAvailabilityBestEffort(new Select(dropdown).getOptions(), socios);
+                List<WebElement> options = new Select(dropdown).getOptions();
+                checkObservedAvailabilityResponse(options);
+                captureAvailabilityBestEffort(options, socios);
             }
             if (e.getCause() instanceof TimeoutException && dropdown != null
                     && dropdown.isDisplayed() && dropdown.isEnabled()
                     && new Select(dropdown).getOptions().stream().allMatch(option ->
-                        !option.isEnabled() || option.getText().isBlank()
+                        !option.isEnabled() || optionVisibleText(option).isBlank()
                             || "-1".equals(option.getAttribute("value")))) {
                 throw new NoSuitableTeeTimeException(e.getMessage(), e);
             }
@@ -585,11 +687,12 @@ public class TeeOneAutomation {
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
+        checkObservedAvailabilityResponse(options);
         captureAvailabilityBestEffort(options, socios);
         horaDeJuegoDropdownOptions = formatHoraDeJuegoOptionsForEmail(options);
         log.info("Hora de juego options (sheet='{}', socios={}):", raw, socios);
         for (WebElement opt : options) {
-            log.info("  - text: '{}' | value: '{}'", opt.getText(), opt.getAttribute("value"));
+            log.info("  - text: '{}' | value: '{}'", optionVisibleText(opt), opt.getAttribute("value"));
         }
 
         String best = pickBestHoraOptionText(raw, socios, options);
@@ -597,8 +700,8 @@ public class TeeOneAutomation {
         select.selectByVisibleText(best);
 
         WebElement selected = select.getFirstSelectedOption();
-        selectedHoraDeJuego = selected.getText().replaceFirst("\\s*\\(\\d+\\)\\s*$", "").trim();
-        log.info("Hora de juego selected: text='{}' value='{}'", selected.getText(), selected.getAttribute("value"));
+        selectedHoraDeJuego = optionVisibleText(selected).replaceFirst("\\s*\\(\\d+\\)\\s*$", "").trim();
+        log.info("Hora de juego selected: text='{}' value='{}'", optionVisibleText(selected), selected.getAttribute("value"));
     }
 
     private String pickBestHoraOptionText(String sheetHorario, int socios, List<WebElement> options) {
@@ -607,8 +710,8 @@ public class TeeOneAutomation {
             // fallback: exact match by text if we can't parse
             for (WebElement opt : options) {
                 if (opt.isEnabled() && !"-1".equals(opt.getAttribute("value"))
-                        && normalize(opt.getText()).equalsIgnoreCase(normalize(sheetHorario))) {
-                    return opt.getText();
+                        && normalize(optionVisibleText(opt)).equalsIgnoreCase(normalize(sheetHorario))) {
+                    return optionVisibleText(opt);
                 }
             }
             throw new NoSuchElementException("Could not parse Horario and no exact match found: " + sheetHorario);
@@ -624,7 +727,7 @@ public class TeeOneAutomation {
             if (!opt.isEnabled() || "-1".equals(opt.getAttribute("value"))) {
                 continue;
             }
-            String original = opt.getText();
+            String original = optionVisibleText(opt);
             Matcher label = timeLabel.matcher(normalize(original));
             if (!label.matches()) {
                 continue;
@@ -1099,7 +1202,7 @@ public class TeeOneAutomation {
         List<Map<String, Object>> offered = new ArrayList<>();
         Pattern labelPattern = Pattern.compile("^(\\d{1,2}:\\d{2})(?:\\s*\\((\\d+)\\))?$");
         for (WebElement option : options) {
-            String label = option.getText();
+            String label = optionVisibleText(option);
             if (label == null || "-1".equals(option.getAttribute("value"))) continue;
             Matcher labelMatch = labelPattern.matcher(label.trim());
             if (!labelMatch.matches()) continue;
@@ -1224,10 +1327,10 @@ public class TeeOneAutomation {
         return horaDeJuegoDropdownOptions;
     }
 
-    private static String formatHoraDeJuegoOptionsForEmail(List<WebElement> options) {
+    private String formatHoraDeJuegoOptionsForEmail(List<WebElement> options) {
         StringBuilder sb = new StringBuilder();
         for (WebElement opt : options) {
-            String t = opt.getText();
+            String t = optionVisibleText(opt);
             if (t == null) {
                 continue;
             }

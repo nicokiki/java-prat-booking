@@ -22,3 +22,5 @@ jobs:
           cache: maven
       - name: Test and build booking JAR (no live booking)
         run: mvn -B clean package assembly:single
+      - name: Validate passive availability observer
+        run: node --test src/test/resources/availability-observer.test.cjs

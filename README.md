@@ -149,6 +149,34 @@ The extra diagnostic observations are in the Actions log, not the public archive
 or CSV. Failed/Informational runs can consequently finish later, including any
 subsequent failure notification; successful bookings do not wait for rechecks.
 
+### Response-aware availability checks
+
+The page's existing jQuery availability requests are observed after login and
+before filter selection. No additional availability requests are issued. Logs
+retain only the matching course/hole/player/date key, request sequence, pending
+state, HTTP status, API result code, returned time count and system-open flag.
+Request tokens, member IDs, raw bodies and API messages are not retained. Older
+responses cannot replace evidence from a newer request or another filter set.
+
+An empty dropdown is accepted only when a matching completed response reports
+HTTP success, API code 1, an open system and zero times. Missing evidence, pending
+requests, API/HTTP errors, a closed system, malformed data or disagreement with
+recognizable dropdown times produce a technical failure, not an empty public
+availability observation. Failed inspections retain valid earlier course snapshots.
+Responses completed before observer installation cannot be reconstructed: an empty
+dropdown without that evidence is conservatively a technical failure. Readable
+non-empty options can still be used if there is no observed response; any observed
+response must agree with them. This change does not add booking retries or waits.
+
+Tee-time readiness, matching, snapshots, selected-time reporting and email labels
+now use the existing DOM-text fallback when Selenium returns blank text. The time
+window, player-capacity rules and course preference are unchanged.
+
+Run `mvn -B clean test` followed by
+`node --test src/test/resources/availability-observer.test.cjs` to validate Java
+decisions and the exact generated observer script without a live booking. Both
+safe validation workflows run these checks.
+
 Compare initial and delayed counts to distinguish blank Selenium text with DOM
 times present, later-loaded times, and persistently unrecognized/absent times.
 These observations alone cannot establish why TeeOne returned no times.
