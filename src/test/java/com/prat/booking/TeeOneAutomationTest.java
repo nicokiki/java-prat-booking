@@ -154,7 +154,11 @@ public class TeeOneAutomationTest {
         WebElement hiddenLabel = option("", "opaque-slot-id");
         when(hiddenLabel.getAttribute("textContent")).thenReturn("08:25 (4)");
         WebElement placeholder = option("Choose", "-1");
+        when(placeholder.isSelected()).thenReturn(true);
+        when(hiddenLabel.isEnabled()).thenReturn(false);
+        when(hiddenLabel.isSelected()).thenReturn(false);
         WebElement unexpected = option("Private fixture name", "sensitive-fixture-value");
+        when(unexpected.isSelected()).thenReturn(false);
         when(unexpected.getAttribute("textContent")).thenReturn("Private fixture name");
 
         var diagnostic = (java.util.Map<?, ?>) invoke("teeTimeOptionDiagnostics", new Class<?>[]{List.class},
@@ -167,13 +171,49 @@ public class TeeOneAutomationTest {
         assertFalse(diagnostic.toString().contains("Private fixture name"));
         assertFalse(diagnostic.toString().contains("opaque-slot-id"));
         assertFalse(diagnostic.toString().contains("sensitive-fixture-value"));
+        assertEquals("<option value=\"-1\" selected>[redacted]</option>"
+            + "<option disabled>08:25 (4)</option><option>[redacted]</option>",
+            diagnostic.get("optionHtml"));
         var bounded = (java.util.Map<?, ?>) invoke("teeTimeOptionDiagnostics", new Class<?>[]{List.class},
             java.util.Collections.nCopies(125, hiddenLabel));
         assertEquals(125, bounded.get("rawOptionCount"));
         assertEquals(125, bounded.get("domTimeCount"));
         assertEquals(100, ((List<?>) bounded.get("options")).size());
+        assertEquals(100, ((String) bounded.get("optionHtml")).split("</option>").length);
+        assertEquals(true, bounded.get("htmlTruncated"));
+        assertEquals(false, diagnostic.get("htmlTruncated"));
         verify(hiddenLabel, never()).click();
         assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+    }
+
+    @Test
+    public void logsRenderedDropdownHtmlWithoutReadingRawPageMarkup() throws Exception {
+        WebElement placeholder = option("", "-1");
+        WebElement time = option("08:25 (4)", "private-slot-value");
+        when(time.getAttribute("textContent")).thenReturn("08:25 (4)");
+        when(time.isSelected()).thenReturn(false);
+        WebElement select = dropdown(placeholder, time);
+        when(select.isEnabled()).thenReturn(false);
+        doReturn(select).when(driver).findElement(By.id("HoraJuego"));
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(TeeOneAutomation.class);
+        var messages = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        messages.start();
+        logger.addAppender(messages);
+        try {
+            invoke("logTeeTimeDiagnostics", new Class<?>[]{int.class, String.class}, 2, "initial-read");
+            String logged = messages.list.get(messages.list.size() - 1).getFormattedMessage();
+            assertTrue(logged.contains("dropdownHtml=<select id=\"HoraJuego\" disabled>"
+                    + "<option value=\"-1\" selected></option><option>08:25 (4)</option></select>"));
+            assertTrue(logged.contains("phase=initial-read"));
+            assertFalse(logged.contains("private-slot-value"));
+            verify(select, never()).getAttribute("outerHTML");
+            verify(select, never()).click();
+            assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+            assertFalse(automation.isReservationSubmitted());
+        } finally {
+            logger.detachAppender(messages);
+            messages.stop();
+        }
     }
 
         @Test
@@ -601,8 +641,8 @@ public class TeeOneAutomationTest {
         assertEquals("TEE 1 AMARILLO", automation.getSelectedRecorrido());
         assertEquals("08:25", automation.getSelectedHoraDeJuego());
         verify(bloquear, times(1)).click();
-        verify(driver, times(2)).findElement(By.id("Hoyos"));
-        verify(driver, times(2)).findElement(By.id("Plazas"));
+        verify(driver, times(4)).findElement(By.id("Hoyos"));
+        verify(driver, times(4)).findElement(By.id("Plazas"));
     }
 
     @Test
@@ -626,7 +666,7 @@ public class TeeOneAutomationTest {
 
         assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
         assertEquals("10:00", automation.getSelectedHoraDeJuego());
-        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(driver, times(2)).findElement(By.id("HoraJuego"));
         verify(bloquear, times(1)).click();
     }
 
@@ -676,7 +716,7 @@ public class TeeOneAutomationTest {
 
         assertNull(automation.getReservationBlockedAt());
         assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
-        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(driver, times(2)).findElement(By.id("HoraJuego"));
         verify(bloquear, times(1)).click();
     }
 
@@ -693,7 +733,7 @@ public class TeeOneAutomationTest {
         }
 
         assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
-        verify(driver, times(1)).findElement(By.id("HoraJuego"));
+        verify(driver, times(2)).findElement(By.id("HoraJuego"));
         verify(bloquear, never()).click();
     }
 

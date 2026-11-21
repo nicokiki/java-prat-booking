@@ -392,13 +392,14 @@ public class TeeOneAutomation {
                             !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")),
                             "a nonblank, non-placeholder time option");
                 } catch (IllegalStateException exception) {
+                    logTeeTimeDiagnostics(2, "readiness-failure");
                     dropdown = findSelectByLabelOrName("Hora de juego");
                     if (!(exception.getCause() instanceof TimeoutException) || dropdown == null
                             || !dropdown.isDisplayed() || !dropdown.isEnabled()) throw exception;
                     requireSuccessfulEmptyAvailability();
                 }
                 List<WebElement> options = new Select(dropdown).getOptions();
-                checkObservedAvailabilityResponse(options);
+                checkObservedAvailabilityResponse(options, 2);
                 captureAvailability(options, 2);
             } catch (RuntimeException exception) {
                 if (failure == null) failure = new IllegalStateException("Availability inspection incomplete");
@@ -474,6 +475,9 @@ public class TeeOneAutomation {
                 return;
             }
             Map<String, Object> diagnostic = teeTimeOptionDiagnostics(new Select(dropdown).getOptions());
+                diagnostic.put("dropdownHtml", "<select id=\"HoraJuego\""
+                    + (dropdown.isEnabled() ? "" : " disabled") + ">"
+                    + diagnostic.remove("optionHtml") + "</select>");
             diagnostic.put("phase", phase);
             diagnostic.put("capturedAt", ZonedDateTime.now(ZoneId.of("Europe/Madrid"))
                     .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
@@ -524,7 +528,8 @@ public class TeeOneAutomation {
         }
     }
 
-    private void checkObservedAvailabilityResponse(List<WebElement> options) {
+    private void checkObservedAvailabilityResponse(List<WebElement> options, int players) {
+        logTeeTimeDiagnostics(players, "initial-read");
         Map<?, ?> response = availabilityResponse();
         log.info("Availability response on {}: {}", selectedRecorrido, response);
         boolean listed = options.stream().anyMatch(option -> {
@@ -696,11 +701,12 @@ public class TeeOneAutomation {
                             && !"-1".equals(option.getAttribute("value")),
                     "a nonblank, non-placeholder time option");
         } catch (IllegalStateException e) {
+            logTeeTimeDiagnostics(socios, "readiness-failure");
             WebElement dropdown = findSelectByLabelOrName("Hora de juego");
             if (e.getCause() instanceof TimeoutException && dropdown != null
                     && dropdown.isDisplayed() && dropdown.isEnabled()) {
                 List<WebElement> options = new Select(dropdown).getOptions();
-                checkObservedAvailabilityResponse(options);
+                checkObservedAvailabilityResponse(options, socios);
                 captureAvailabilityBestEffort(options, socios);
             }
             if (e.getCause() instanceof TimeoutException && dropdown != null
@@ -715,7 +721,7 @@ public class TeeOneAutomation {
 
         Select select = new Select(selectEl);
         List<WebElement> options = select.getOptions();
-        checkObservedAvailabilityResponse(options);
+        checkObservedAvailabilityResponse(options, socios);
         captureAvailabilityBestEffort(options, socios);
         horaDeJuegoDropdownOptions = formatHoraDeJuegoOptionsForEmail(options);
         log.info("Hora de juego options (sheet='{}', socios={}):", raw, socios);
@@ -1190,6 +1196,7 @@ public class TeeOneAutomation {
 
     private Map<String, Object> teeTimeOptionDiagnostics(List<WebElement> options) {
         List<Map<String, Object>> labels = new ArrayList<>();
+        StringBuilder html = new StringBuilder();
         int blankVisible = 0;
         int domTimes = 0;
         int enabled = 0;
@@ -1208,6 +1215,14 @@ public class TeeOneAutomation {
                 label.put("placeholder", "-1".equals(option.getAttribute("value")));
                 label.put("enabled", option.isEnabled());
                 labels.add(label);
+                html.append("<option");
+                if ("-1".equals(option.getAttribute("value"))) html.append(" value=\"-1\"");
+                if (!option.isEnabled()) html.append(" disabled");
+                if (option.isSelected()) html.append(" selected");
+                String text = "blank".equals(dom) ? visible : dom;
+                html.append(">")
+                    .append("non-time".equals(text) ? "[redacted]" : "blank".equals(text) ? "" : text)
+                    .append("</option>");
             }
         }
         Map<String, Object> diagnostic = new LinkedHashMap<>();
@@ -1216,6 +1231,8 @@ public class TeeOneAutomation {
         diagnostic.put("blankVisibleTextCount", blankVisible);
         diagnostic.put("domTimeCount", domTimes);
         diagnostic.put("options", labels);
+        diagnostic.put("optionHtml", html.toString());
+        diagnostic.put("htmlTruncated", options.size() > labels.size());
         return diagnostic;
     }
 

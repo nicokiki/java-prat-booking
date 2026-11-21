@@ -167,14 +167,32 @@ ten-minute grid is assumed.
 ## Empty Tee-Time Diagnostics
 
 An empty saved snapshot means zero recognized tee-time labels, not necessarily
-zero raw dropdown options. Empty reads now write `Tee-time diagnostic` entries
-to the application log with `phase=initial-empty`, a Madrid capture timestamp,
+zero raw dropdown options. Reads write `Tee-time diagnostic` entries
+to the application log with `phase=initial-read` before response validation,
+`phase=initial-empty` for a saved empty observation, or `phase=readiness-failure`
+when the time dropdown did not become ready. Each includes a Madrid capture timestamp,
 raw and enabled option counts, blank Selenium label count, DOM time-label count,
 dropdown visibility/enabled state, actual selected course/holes/player filters,
 and the observed `jQuery.active` value when available. Time-label details are
-limited to 100 options; counts still cover the entire dropdown. Non-time text
-and opaque option values are excluded, as are full HTML, credentials and member
-identities. `jqueryActive=not-present` is not evidence that all requests are idle.
+limited to 100 options; counts still cover the entire dropdown.
+
+`dropdownHtml` contains a normalized, sanitized HTML excerpt of the rendered
+HoraJuego select and its options, including selected/disabled states. Option
+labels use DOM text with the Selenium text fallback, not the raw initial page
+source. This preserves the readable tee-time/capacity labels a member sees,
+including cases where Selenium reports blank text. For example:
+
+```html
+<select id="HoraJuego"><option value="-1" selected></option><option disabled>08:25 (4)</option></select>
+```
+
+This is diagnostic markup, not a verbatim page dump: only the safe `-1`
+placeholder value is retained; other values and arbitrary attributes are omitted.
+Blank text remains blank and non-time text becomes `[redacted]`. Credentials,
+member identities, full-page HTML and raw request/response bodies are never
+included. `htmlTruncated=true` indicates the excerpt stops after 100 options;
+the raw counts remain complete. Visibility is recorded separately as `displayed`.
+`jqueryActive=not-present` is not evidence that all requests are idle.
 
 After the initial availability inspection finishes, or both booking courses fail
 to provide an eligible time, empty courses receive one diagnostic-only recheck.
