@@ -20,6 +20,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.text.Normalizer;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -31,6 +34,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,6 +46,34 @@ import java.util.regex.Pattern;
 public class TeeOneAutomation {
 
     private static final Logger log = LoggerFactory.getLogger(TeeOneAutomation.class);
+    private static final Logger teeTimeHtmlLog = LoggerFactory.getLogger("com.prat.booking.TeeTimeHtml");
+    private static final String RENDER_TEE_TIME_SCREENSHOT = """
+            const template = document.createElement('template');
+            template.innerHTML = arguments[0];
+            const source = template.content.querySelector('select');
+            if (!source) return null;
+            const panel = document.createElement('div');
+            panel.style.cssText = 'position:fixed;left:10px;top:10px;z-index:2147483647;width:360px;padding:12px;background:white;color:black;font:16px sans-serif';
+            const shadow = panel.attachShadow({mode: 'open'});
+            const title = document.createElement('div');
+            const metadata = arguments[1];
+            title.textContent = metadata.course + ' | ' + metadata.date + ' | ' + metadata.players + ' players | ' + metadata.capturedAt;
+            title.style.cssText = 'margin-bottom:8px;font:14px sans-serif';
+            const dropdown = document.createElement('select');
+            dropdown.style.cssText = 'width:100%;height:auto;font:16px sans-serif';
+            dropdown.disabled = source.disabled;
+            for (const original of source.options) {
+                const option = document.createElement('option');
+                option.textContent = original.label || original.textContent;
+                option.disabled = original.disabled;
+                option.selected = original.selected;
+                dropdown.append(option);
+            }
+            dropdown.size = Math.max(2, Math.min(dropdown.options.length, 20));
+            shadow.append(title, dropdown);
+            document.body.append(panel);
+            return {panel: panel, pages: Math.max(1, Math.ceil(Math.min(dropdown.options.length, 100) / 20))};
+            """;
     private static final String BASE_URL = "https://members.teeone.golf/prat/reservas/inscripcion/";
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration PAGE_LOAD_WAIT = Duration.ofSeconds(3);
@@ -108,6 +141,10 @@ public class TeeOneAutomation {
     private final List<Map<String, Object>> availabilitySnapshots = new ArrayList<>();
     private Duration diagnosticRecheckDelay = Duration.ofSeconds(15);
     private Duration diagnosticObservationTimeout = Duration.ofSeconds(10);
+    private Path teeTimeCaptureDirectory = Path.of("logs", "availability");
+    private final Set<String> capturedTeeTimeScreenshots = new HashSet<>();
+    private record TeeTimeEvidence(String course, String date, int players, String phase, String capturedAt, String html) {}
+    private final List<TeeTimeEvidence> pendingTeeTimeEvidence = new ArrayList<>();
     private final Map<String, String> observedSocioNames = new LinkedHashMap<>();
     private boolean reservationSubmitted;
     private boolean bookingUnavailable;
@@ -157,6 +194,8 @@ public class TeeOneAutomation {
         selectedHoraDeJuego = null;
         selectedRecorrido = null;
         availabilitySnapshots.clear();
+        capturedTeeTimeScreenshots.clear();
+        pendingTeeTimeEvidence.clear();
         observedSocioNames.clear();
         reservationSubmitted = false;
         bookingUnavailable = false;
@@ -357,10 +396,17 @@ public class TeeOneAutomation {
         selectedHoraDeJuego = null;
         horaDeJuegoDropdownOptions = null;
         installAvailabilityObserver();
-        selectDropdown("Recorrido", recorrido);
-        selectDropdown("Número de hoyos", "18");
-        selectDropdown("Jugadores", String.valueOf(players));
-        waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT);
+        try {
+            selectDropdown("Recorrido", recorrido);
+            waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT, true);
+            selectDropdown("Número de hoyos", "18");
+            waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT, true);
+            selectDropdown("Jugadores", String.valueOf(players));
+            waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT, true);
+        } catch (RuntimeException exception) {
+            logTeeTimeDiagnostics(players, "filter-failure");
+            throw exception;
+        }
     }
 
     private void installAvailabilityObserver() {
@@ -474,6 +520,7 @@ public class TeeOneAutomation {
                 log.warn("Tee-time diagnostic: phase={} course={} dropdown missing", phase, selectedRecorrido);
                 return;
             }
+            captureTeeTimeEvidence(dropdown, players, phase);
             Map<String, Object> diagnostic = teeTimeOptionDiagnostics(new Select(dropdown).getOptions());
                 diagnostic.put("dropdownHtml", "<select id=\"HoraJuego\""
                     + (dropdown.isEnabled() ? "" : " disabled") + ">"
@@ -498,6 +545,85 @@ public class TeeOneAutomation {
             log.info("Tee-time diagnostic: {}", diagnostic);
         } catch (RuntimeException exception) {
             log.warn("Tee-time diagnostic unavailable: phase={} course={}; original outcome retained", phase, selectedRecorrido);
+        }
+    }
+
+    private void captureTeeTimeEvidence(WebElement dropdown, int players, String phase) {
+        String playDate = "unknown";
+        try {
+            String url = driver.getCurrentUrl();
+            Matcher date = Pattern.compile("/inscripcion/(\\d{8})(?:[/?#]|$)").matcher(url == null ? "" : url);
+            if (date.find()) playDate = date.group(1);
+            String html = dropdown.getDomProperty("outerHTML");
+            if (html != null) pendingTeeTimeEvidence.add(new TeeTimeEvidence(selectedRecorrido, playDate, players, phase,
+                    ZonedDateTime.now(ZoneId.of("Europe/Madrid")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME), html));
+        } catch (RuntimeException exception) {
+            log.warn("Raw tee-time HTML unavailable: phase={} course={}; original outcome retained", phase, selectedRecorrido);
+        }
+    }
+
+    public void saveTeeTimeEvidence() {
+        List<TeeTimeEvidence> pending = new ArrayList<>(pendingTeeTimeEvidence);
+        pendingTeeTimeEvidence.clear();
+        for (TeeTimeEvidence evidence : pending) {
+            try {
+                teeTimeHtmlLog.info("Tee-time raw HTML: capturedAt={} phase={} course={} date={} players={} html={}",
+                        evidence.capturedAt(), evidence.phase(), evidence.course(), evidence.date(), evidence.players(), evidence.html());
+                saveTeeTimeScreenshots(evidence);
+            } catch (RuntimeException exception) {
+                log.warn("Deferred tee-time evidence could not be saved for {}; original outcome retained", evidence.course());
+            }
+        }
+    }
+
+    private void saveTeeTimeScreenshots(TeeTimeEvidence evidence) {
+        String stage = "delayed-read-only".equals(evidence.phase()) ? "delayed" : "initial";
+        String key = evidence.course() + "|" + stage;
+        if (driver == null || capturedTeeTimeScreenshots.contains(key)) return;
+        WebElement panel = null;
+        List<byte[]> screenshots = new ArrayList<>();
+        try {
+            Object rendered = ((JavascriptExecutor) driver).executeScript(RENDER_TEE_TIME_SCREENSHOT, evidence.html(),
+                    Map.of("course", String.valueOf(evidence.course()), "date", evidence.date(), "players", evidence.players(), "capturedAt", evidence.capturedAt()));
+            if (!(rendered instanceof Map<?, ?> state) || !(state.get("panel") instanceof WebElement element)) return;
+            panel = element;
+            int pages = state.get("pages") instanceof Number count
+                    ? Math.max(1, Math.min(count.intValue(), 5)) : 1;
+            for (int page = 0; page < pages; page++) {
+                ((JavascriptExecutor) driver).executeScript("const dropdown = arguments[0].shadowRoot.querySelector('select'); dropdown.scrollTop = arguments[1] * dropdown.clientHeight;", panel, page);
+                byte[] png = panel.getScreenshotAs(OutputType.BYTES);
+                if (png == null || png.length == 0) return;
+                screenshots.add(png);
+            }
+        } catch (RuntimeException exception) {
+            log.warn("Deferred tee-time screenshot unavailable for {}; original outcome retained", evidence.course());
+            return;
+        } finally {
+            if (panel != null) {
+                try {
+                    ((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+                } catch (RuntimeException exception) {
+                    log.warn("Could not remove deferred tee-time screenshot panel for {}", evidence.course());
+                }
+            }
+        }
+        String course = "unknown";
+        if (evidence.course() != null) {
+            Matcher color = Pattern.compile("\\b(ROSA|AMARILLO|VERDE)\\b").matcher(evidence.course());
+            if (color.find()) course = color.group(1).toLowerCase(Locale.ROOT);
+        }
+        try {
+            Files.createDirectories(teeTimeCaptureDirectory);
+                for (int index = 0; index < screenshots.size(); index++) {
+                Path screenshot = Files.createTempFile(teeTimeCaptureDirectory,
+                    evidence.date() + "-" + course + "-p" + evidence.players() + "-" + stage + "-part" + (index + 1) + "-", ".png");
+                Files.write(screenshot, screenshots.get(index));
+                log.info("Tee-time screenshot: phase={} course={} players={} expanded-dropdown={}",
+                    evidence.phase(), evidence.course(), evidence.players(), screenshot);
+                }
+            capturedTeeTimeScreenshots.add(key);
+        } catch (IOException exception) {
+            log.warn("Could not save deferred tee-time screenshot for {}; original outcome retained", evidence.course());
         }
     }
 
@@ -667,12 +793,17 @@ public class TeeOneAutomation {
 
     /** Best-effort wait for in-flight TeeOne / jQuery AJAX after changing filters. */
     private void waitUntilJQueryAjaxIdle(Duration maxWait) {
+        waitUntilJQueryAjaxIdle(maxWait, false);
+    }
+
+    private void waitUntilJQueryAjaxIdle(Duration maxWait, boolean required) {
         try {
             new WebDriverWait(driver, maxWait).pollingEvery(Duration.ofMillis(200))
                     .until(d -> Boolean.TRUE.equals(((JavascriptExecutor) d).executeScript(
                             "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }")));
             log.info("jQuery AJAX idle after filter change");
         } catch (TimeoutException e) {
+            if (required) throw new IllegalStateException("Availability filter request did not finish; refusing to change another filter or select a time", e);
             log.warn("jQuery.active did not return to 0 within {} — continuing", maxWait);
         }
     }

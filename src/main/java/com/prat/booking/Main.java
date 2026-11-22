@@ -82,7 +82,13 @@ public class Main {
             log.error("Notification failed; saved booking outcome is unchanged", e);
         } finally {
             if (automation != null) {
-                automation.close();
+                try {
+                    automation.saveTeeTimeEvidence();
+                } catch (RuntimeException exception) {
+                    log.warn("Deferred diagnostics failed; saved booking outcome is unchanged", exception);
+                } finally {
+                    automation.close();
+                }
             }
         }
     }

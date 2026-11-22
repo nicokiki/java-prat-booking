@@ -194,6 +194,46 @@ included. `htmlTruncated=true` indicates the excerpt stops after 100 options;
 the raw counts remain complete. Visibility is recorded separately as `displayed`.
 `jqueryActive=not-present` is not evidence that all requests are idle.
 
+### Verbatim HTML and course screenshots
+
+After the player filter settles and the time dropdown is inspected, the actual
+rendered `HoraJuego.outerHTML` and capture metadata are copied into memory only.
+No raw-HTML log writes, PNG capture, screenshot rendering or new capture-file writes
+run in the selection/block/confirmation path; existing operational logs are unchanged.
+`Main` saves the queued evidence
+after the normal booking or inspection flow, result saving and email handling,
+just before closing the browser, including failure and no-email paths.
+The unchanged HTML is then written to `logs/availability/tee-time-html.log`.
+This separate file-only logger does not
+print raw HTML to the Actions console. Entries include phase, course, play date
+and player count, with `capturedAt` recording when the original HTML was read,
+not when the file was written. The sanitized `dropdownHtml` remains in the normal diagnostic
+log; the verbatim capture additionally retains original option values,
+attributes and any member labels. It is not full-page source or an API body.
+
+One initial PNG set per observed course is saved under `logs/availability/`, with
+the play date, course and player count in its filename. There can also be one
+delayed-recheck PNG set per course. Readiness and filter failures are queued too.
+After the flow, the saved HTML is rendered into an isolated, temporary panel:
+only option labels and selected/disabled states are copied into new native
+controls; original event handlers and arbitrary attributes are not executed.
+The panel shows 20 rows and scrolls through up to 100 options in at most five
+numbered parts (the last part can overlap), then is removed. PNGs represent
+the saved HTML snapshot, not a live screenshot taken during selection. Live
+reservation controls are never expanded or changed, and courses are not revisited.
+Diagnostic capture failures do not replace the booking outcome. Only the small
+DOM/metadata snapshot read remains in the normal path; browser rendering and
+file work happen afterward, with no added availability requests or reservation retries.
+
+Raw HTML and PNGs may contain private member labels and are **not** sent to the
+public dashboard, report JSON, CSV or email. To retain them from Actions, explicitly
+enable workflow input `upload_availability_diagnostics` (default **false**).
+The `availability-diagnostics-RUN_ID-ATTEMPT` artifact lasts seven days and may
+be downloaded by other authenticated users because this repository is public.
+External schedulers must explicitly pass this input as `true` if approved;
+otherwise files exist only on the ephemeral runner. Build-time mock captures
+are removed before the live JAR starts so the artifact contains live evidence.
+
 After the initial availability inspection finishes, or both booking courses fail
 to provide an eligible time, empty courses receive one diagnostic-only recheck.
 There is one 15-second pause, then each empty course's filters are reapplied and
@@ -390,6 +430,7 @@ When you click **Run workflow**, you can set:
 |--------|---------|--------|
 | **skip_madrid_time_wait** | `true` (checked) | If **true**: bypass the 19:35 wait, late-start check, and internal Europe/Madrid waits (see [Time window](#time-window-europemadrid)); the flow runs as soon as the JAR starts. If **false**: enforce the 19:57 cutoff and use the production waits. External schedulers must explicitly pass **false**. |
 | **target_date_offset_days** | `2` | `0` = today, `1` = tomorrow, `2` = in two days. Determines the sheet play-date row and the inspection/booking date. External schedulers should pass **2**. |
+| **upload_availability_diagnostics** | `false` | Opt in to a seven-day artifact containing verbatim dropdown HTML and course PNGs. Treat it as sensitive: downloads are accessible to other authenticated users of this public repository. |
 
 The workflow maps these to process environment variables for the JAR:
 
@@ -487,7 +528,13 @@ considering Amarillo at 08:25. Verde has no alternate-course fallback.
 Success emails report the actual selected course and time in both subject and
 booking details. The option list is from the last course inspected.
 
-The post-Recorrido AJAX wait remains, with another wait after the player filter.
+Filter changes are sequential: select Recorrido, wait for AJAX to finish, select
+18 holes, wait again, then select the player count and wait before reading times.
+Each filter-stage AJAX wait allows up to 15 seconds. If it does not settle, the
+run stops as Technical Failure rather than changing another filter while an
+earlier response could still replace the dropdown. These are readiness waits,
+not additional availability requests or reservation retries; the three-second
+time-dropdown budget and its conditional one-second extension are unchanged.
 Observed responses must match the current course, holes, players and play date;
 pending/failed responses and API/DOM inconsistencies stop the booking. Readable
 options without observed response evidence are still usable, so checks cannot
@@ -712,4 +759,4 @@ Never place a GitHub token in the dashboard's JavaScript.
 - **Selectors** — if TeeOne’s HTML changes, update `TeeOneAutomation.java`.
 - **Sheet tab** — if not `Sheet1!A:Z`, set `GOOGLE_SHEET_RANGE` in secrets / `.env`.
 - **Unconfirmed submission:** check TeeOne's existing reservations before recovery. Do not blindly dispatch again; neither email nor publication failures justify another booking.
-- **Diagnostics and privacy:** request tokens, member IDs and raw responses are excluded from availability logs. Public execution reports may include approved participant names/licences; email screenshots can be private. Never share credentials or raw page HTML to troubleshoot.
+- **Diagnostics and privacy:** structured availability logs exclude request tokens, member IDs and raw responses. The separate raw-dropdown log and PNGs are not sanitized and may contain member labels or attributes; inspect them before sharing or enabling artifact upload. Full-page HTML and raw API bodies are not captured. Public execution reports may include approved participant names/licences; email screenshots can be private. Never share credentials.

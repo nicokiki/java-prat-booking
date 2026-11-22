@@ -20,10 +20,33 @@ public class MainTest {
              var emails = mockConstruction(EmailNotifier.class)) {
             Main.main(new String[0]);
             TeeOneAutomation browser = browsers.constructed().get(0);
-            verify(browser).close();
+            var order = inOrder(browser);
+            order.verify(browser).performAvailabilityInspection(any());
+            order.verify(browser).saveTeeTimeEvidence();
+            order.verify(browser).close();
             verify(browser, never()).performBooking(any());
             assertTrue(emails.constructed().isEmpty());
             reports.verify(() -> BookingReport.saveBestEffort(isNull(), any(), same(browser), any()));
+        }
+    }
+
+    @Test
+    public void deferredDiagnosticsFailureStillClosesBrowserAfterFlow() throws Exception {
+        try (var config = mockStatic(Config.class);
+             var reports = mockStatic(BookingReport.class);
+             var readers = mockConstruction(GoogleSheetsReader.class, (reader, context) ->
+                     when(reader.getBookingForDate(any())).thenThrow(new GoogleSheetsReader.NoBookingForDateException(LocalDate.now())));
+             var browsers = mockConstruction(TeeOneAutomation.class, (browser, context) ->
+                     doThrow(new IllegalStateException("Fixture deferred save failure")).when(browser).saveTeeTimeEvidence());
+             var emails = mockConstruction(EmailNotifier.class)) {
+            Main.main(new String[0]);
+            TeeOneAutomation browser = browsers.constructed().get(0);
+            var order = inOrder(browser);
+            order.verify(browser).performAvailabilityInspection(any());
+            order.verify(browser).saveTeeTimeEvidence();
+            order.verify(browser).close();
+            reports.verify(() -> BookingReport.saveBestEffort(isNull(), any(), same(browser), any()));
+            assertTrue(emails.constructed().isEmpty());
         }
     }
 
@@ -51,6 +74,11 @@ public class MainTest {
                     "Fecha: 17/11/2026\nRecorrido: TEE 1 AMARILLO\nHorario: 08:15\nSocios: 3\n\nHora de juego (opciones en desplegable):\n08:15 (3)",
                     screenshot, confirmed, LocalDate.of(2026, 11, 17), "08:15", "TEE 1 AMARILLO", blocked);
             verify(emails.constructed().get(0), never()).sendFailure(any());
+            var order = inOrder(browsers.constructed().get(0), emails.constructed().get(0));
+            order.verify(browsers.constructed().get(0)).performBooking(same(data));
+            order.verify(emails.constructed().get(0)).sendSuccess(anyString(), any(), any(), any(), anyString(), anyString(), any());
+            order.verify(browsers.constructed().get(0)).saveTeeTimeEvidence();
+            order.verify(browsers.constructed().get(0)).close();
         }
     }
 
@@ -66,7 +94,10 @@ public class MainTest {
             TeeOneAutomation browser = browsers.constructed().get(0);
             verify(browser).performAvailabilityInspection(any(LocalDate.class));
             verify(browser, never()).performBooking(any());
-            verify(browser).close();
+            var order = inOrder(browser);
+            order.verify(browser).performAvailabilityInspection(any());
+            order.verify(browser).saveTeeTimeEvidence();
+            order.verify(browser).close();
             assertTrue(emails.constructed().isEmpty());
             reports.verify(() -> BookingReport.saveBestEffort(isNull(), any(), same(browser), any()));
         }

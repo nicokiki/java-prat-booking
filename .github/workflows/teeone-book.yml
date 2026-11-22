@@ -15,6 +15,10 @@ on:
           - "1"
           - "0"
         default: "2"
+      upload_availability_diagnostics:
+        description: "Upload raw dropdown HTML and PNGs as an artifact (may contain member labels; public repo downloads)"
+        type: boolean
+        default: false
 
 concurrency:
   group: teeone-booking-scheduled
@@ -163,6 +167,7 @@ jobs:
           mvn -q clean package assembly:single
 
       - name: Run booking
+        id: booking_execution
         shell: bash
         env:
           # If you want extra logs, set these in repo secrets/vars:
@@ -173,7 +178,20 @@ jobs:
           BOOKING_TARGET_DATE_OFFSET_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date_offset_days || '2' }}
         run: |
           set -euo pipefail
+          # Remove build-time mock captures before recording the live execution.
+          rm -f logs/availability/*.log logs/availability/*.png
+          echo "live=true" >> "$GITHUB_OUTPUT"
           java -jar target/teeone-booking-jar-with-dependencies.jar
+
+      - name: Back up availability diagnostics (opt-in)
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.upload_availability_diagnostics && steps.booking_execution.outputs.live == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: availability-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/availability/
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Locate saved booking result
         id: report

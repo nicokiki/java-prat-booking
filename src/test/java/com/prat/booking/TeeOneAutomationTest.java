@@ -52,6 +52,66 @@ public class TeeOneAutomationTest {
     }
 
     @Test
+        public void filterChangesWaitForPreviousAvailabilityRequest() throws Exception {
+        configureCourses("TEE 1 ROSA", dropdown(option("08:30 (4)", "08:30")),
+            "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
+        invoke("selectCourseFilters", new Class<?>[]{String.class, int.class}, "TEE 1 ROSA", 2);
+        var order = inOrder(driver);
+        order.verify(driver).findElement(By.id("Recorrido"));
+        order.verify((JavascriptExecutor) driver).executeScript(
+            "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }");
+        order.verify(driver).findElement(By.id("Hoyos"));
+        order.verify((JavascriptExecutor) driver).executeScript(
+            "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }");
+        order.verify(driver).findElement(By.id("Plazas"));
+        order.verify((JavascriptExecutor) driver).executeScript(
+            "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }");
+        assertNull(automation.getSelectedHoraDeJuego());
+        assertNull(automation.getReservationBlockedAt());
+        assertFalse(automation.isReservationSubmitted());
+        }
+
+        @Test
+            public void filterRequestTimeoutCannotProceedAsAvailability() throws Exception {
+            doReturn(false).when((JavascriptExecutor) driver).executeScript(
+                "try { return !window.jQuery || window.jQuery.active === 0; } catch (e) { return true; }");
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> invoke("waitUntilJQueryAjaxIdle", new Class<?>[]{Duration.class, boolean.class}, Duration.ZERO, true));
+            assertTrue(failure.getMessage().contains("refusing to change another filter"));
+            assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+            assertNull(automation.getReservationBlockedAt());
+            assertFalse(automation.isReservationSubmitted());
+            }
+
+            @Test
+            public void filterFailureStillLogsRawDropdownWithoutBooking() throws Exception {
+                WebElement select = dropdown(option("08:30 (4)", "08:30"));
+                configureCourses("TEE 1 ROSA", select,
+                        "TEE 1 AMARILLO", dropdown(option("08:25 (4)", "08:25")));
+                when(select.getDomProperty("outerHTML")).thenReturn("<select id=\"HoraJuego\"><option value=\"08:30\">08:30 (4)</option></select>");
+                WebElement players = dropdown(option("2", "2"));
+                when(players.isDisplayed()).thenThrow(new WebDriverException("Fixture player filter failure"));
+                doReturn(players).when(driver).findElement(By.id("Plazas"));
+                var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("com.prat.booking.TeeTimeHtml");
+                var messages = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+                messages.start();
+                logger.addAppender(messages);
+                try {
+                    assertThrows(WebDriverException.class,
+                            () -> invoke("selectCourseFilters", new Class<?>[]{String.class, int.class}, "TEE 1 ROSA", 2));
+                        assertTrue(messages.list.isEmpty());
+                        automation.saveTeeTimeEvidence();
+                    assertTrue(messages.list.get(0).getFormattedMessage().contains("phase=filter-failure"));
+                    assertNull(automation.getSelectedHoraDeJuego());
+                    assertNull(automation.getReservationBlockedAt());
+                    assertFalse(automation.isReservationSubmitted());
+                } finally {
+                    logger.detachAppender(messages);
+                    messages.stop();
+                }
+            }
+
+            @Test
     public void recorridoWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Recorrido", "Recorrido", "TEE 1 AMARILLO", "03");
     }
@@ -187,6 +247,159 @@ public class TeeOneAutomationTest {
     }
 
     @Test
+    public void rawHtmlAndPngWritesWaitUntilAfterNormalFlow() throws Exception {
+        WebElement source = dropdown(option("08:25 (4)", "08:25"));
+        String html = "<select id=\"HoraJuego\"><option value=\"08:25\">08:25 (4)</option></select>";
+        when(source.getDomProperty("outerHTML")).thenReturn(html);
+        WebElement panel = mock(WebElement.class);
+        doReturn(java.util.Map.of("panel", panel, "pages", 1)).when((JavascriptExecutor) driver)
+                .executeScript(contains("createElement('template')"), eq(html), anyMap());
+        var bytes = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
+        when(panel.getScreenshotAs(OutputType.BYTES)).thenReturn(bytes.toByteArray());
+        var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "deferred-tee-time-");
+        Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
+        captureDirectory.setAccessible(true);
+        captureDirectory.set(automation, directory);
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("com.prat.booking.TeeTimeHtml");
+        var messages = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        messages.start();
+        logger.addAppender(messages);
+        try {
+            invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, source, 2, "initial-read");
+            assertTrue(messages.list.isEmpty());
+            verify(panel, never()).getScreenshotAs(any());
+            verify((JavascriptExecutor) driver, never()).executeScript(contains("createElement('template')"), anyString(), anyMap());
+            try (var files = java.nio.file.Files.list(directory)) { assertEquals(0, files.count()); }
+            when(source.getDomProperty("outerHTML")).thenReturn("changed after booking");
+            automation.saveTeeTimeEvidence();
+            assertTrue(messages.list.get(0).getFormattedMessage().endsWith("html=" + html));
+            assertTrue(messages.list.get(0).getFormattedMessage().contains("capturedAt="));
+            try (var files = java.nio.file.Files.list(directory)) { assertEquals(1, files.count()); }
+            verify(panel).getScreenshotAs(OutputType.BYTES);
+            verify(source, never()).getScreenshotAs(any());
+            verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+            automation.saveTeeTimeEvidence();
+            assertEquals(1, messages.list.size());
+        } finally {
+            logger.detachAppender(messages);
+            messages.stop();
+        }
+    }
+
+    @Test
+    public void capturesVerbatimDropdownHtmlAndScreenshotWithoutSelectingTime() throws Exception {
+        WebElement select = dropdown(option("08:25 (4)", "08:25"));
+        String html = "<select id=\"HoraJuego\" data-original=\"A&amp;B\"><option value=\"08:25\" data-reservables=\"4\">08:25 (4)</option></select>";
+        when(select.getDomProperty("outerHTML")).thenReturn(html);
+        when(driver.getCurrentUrl()).thenReturn("https://members.teeone.golf/prat/reservas/inscripcion/20261123");
+        WebElement panel = mock(WebElement.class);
+        doReturn(java.util.Map.of("panel", panel, "pages", 1)).when((JavascriptExecutor) driver)
+            .executeScript(contains("createElement('template')"), eq(html), anyMap());
+        var bytes = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
+        when(panel.getScreenshotAs(OutputType.BYTES)).thenReturn(bytes.toByteArray());
+        var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-capture-");
+        Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
+        captureDirectory.setAccessible(true);
+        captureDirectory.set(automation, directory);
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("com.prat.booking.TeeTimeHtml");
+        var messages = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        messages.start();
+        logger.addAppender(messages);
+        try {
+            invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-read");
+            assertTrue(messages.list.isEmpty());
+            verify(panel, never()).getScreenshotAs(any());
+            automation.saveTeeTimeEvidence();
+            assertTrue(messages.list.get(0).getFormattedMessage().endsWith("html=" + html));
+            assertTrue(messages.list.get(0).getFormattedMessage().contains("date=20261123"));
+            assertFalse(logger.isAdditive());
+            try (var files = java.nio.file.Files.list(directory)) {
+                var png = files.findFirst().orElseThrow();
+                assertArrayEquals(bytes.toByteArray(), java.nio.file.Files.readAllBytes(png));
+                assertNotNull(javax.imageio.ImageIO.read(png.toFile()));
+            }
+            verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+            invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-empty");
+            automation.saveTeeTimeEvidence();
+            verify(panel, times(1)).getScreenshotAs(OutputType.BYTES);
+            Field course = TeeOneAutomation.class.getDeclaredField("selectedRecorrido");
+            course.setAccessible(true);
+            for (String name : List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")) {
+                course.set(automation, name);
+                invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-read");
+            }
+            automation.saveTeeTimeEvidence();
+            try (var files = java.nio.file.Files.list(directory)) {
+                List<String> names = files.map(file -> file.getFileName().toString()).toList();
+                for (String name : List.of("rosa", "amarillo", "verde")) {
+                    assertTrue(names.stream().anyMatch(file -> file.startsWith("20261123-" + name + "-p2-initial-")));
+                }
+            }
+            verify(select, never()).click();
+            verify(select, never()).getScreenshotAs(any());
+            verify(driver, never()).getPageSource();
+            assertNull(automation.getSelectedHoraDeJuego());
+            assertNull(automation.getReservationBlockedAt());
+            assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        } finally {
+            logger.detachAppender(messages);
+            messages.stop();
+        }
+    }
+
+    @Test
+    public void longDropdownScreenshotsCaptureAllBoundedParts() throws Exception {
+        WebElement select = dropdown(option("08:25 (4)", "08:25"));
+        String html = "<select>" + "<option>08:25 (4)</option>".repeat(52) + "</select>";
+        when(select.getDomProperty("outerHTML")).thenReturn(html);
+        WebElement panel = mock(WebElement.class);
+        doReturn(java.util.Map.of("panel", panel, "pages", 3)).when((JavascriptExecutor) driver)
+            .executeScript(contains("createElement('template')"), eq(html), anyMap());
+        var bytes = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
+        when(panel.getScreenshotAs(OutputType.BYTES)).thenReturn(bytes.toByteArray());
+        var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-parts-");
+        Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
+        captureDirectory.setAccessible(true);
+        captureDirectory.set(automation, directory);
+        invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-read");
+        verify(panel, never()).getScreenshotAs(any());
+        automation.saveTeeTimeEvidence();
+        try (var files = java.nio.file.Files.list(directory)) {
+            assertEquals(3, files.count());
+        }
+        for (int index = 0; index < 3; index++) {
+            verify((JavascriptExecutor) driver).executeScript(contains("clientHeight"), eq(panel), eq(index));
+        }
+        verify(panel, times(3)).getScreenshotAs(OutputType.BYTES);
+        verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+        verify(select, never()).getScreenshotAs(any());
+        verify(select, never()).click();
+    }
+
+    @Test
+    public void screenshotFailureRestoresPresentationWithoutChangingOutcome() throws Exception {
+        WebElement select = dropdown(option("", "-1"));
+        String html = "<select id=\"HoraJuego\"><option value=\"-1\"></option></select>";
+        when(select.getDomProperty("outerHTML")).thenReturn(html);
+        WebElement panel = mock(WebElement.class);
+        doReturn(java.util.Map.of("panel", panel, "pages", 1)).when((JavascriptExecutor) driver)
+            .executeScript(contains("createElement('template')"), eq(html), anyMap());
+        when(panel.getScreenshotAs(OutputType.BYTES)).thenThrow(new WebDriverException("Fixture screenshot failure"));
+        invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "readiness-failure");
+        automation.saveTeeTimeEvidence();
+        verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+        verify(select, never()).getScreenshotAs(any());
+        assertNull(automation.getSelectedHoraDeJuego());
+        assertNull(automation.getReservationBlockedAt());
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertFalse(automation.isReservationSubmitted());
+        verify(select, never()).click();
+    }
+
+    @Test
     public void logsRenderedDropdownHtmlWithoutReadingRawPageMarkup() throws Exception {
         WebElement placeholder = option("", "-1");
         WebElement time = option("08:25 (4)", "private-slot-value");
@@ -207,6 +420,7 @@ public class TeeOneAutomationTest {
             assertTrue(logged.contains("phase=initial-read"));
             assertFalse(logged.contains("private-slot-value"));
             verify(select, never()).getAttribute("outerHTML");
+            verify(select).getDomProperty("outerHTML");
             verify(select, never()).click();
             assertTrue(automation.getAvailabilitySnapshots().isEmpty());
             assertFalse(automation.isReservationSubmitted());

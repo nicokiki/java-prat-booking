@@ -15,6 +15,19 @@
             <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
+    <appender name="TEE_TIME_HTML" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/availability/tee-time-html.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/availability/tee-time-html.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <logger name="com.prat.booking.TeeTimeHtml" level="INFO" additivity="false">
+        <appender-ref ref="TEE_TIME_HTML"/>
+    </logger>
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
