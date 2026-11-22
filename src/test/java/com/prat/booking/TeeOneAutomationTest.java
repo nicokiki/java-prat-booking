@@ -357,6 +357,10 @@ public class TeeOneAutomationTest {
         WebElement select = dropdown(option("08:25 (4)", "08:25"));
         String html = "<select>" + "<option>08:25 (4)</option>".repeat(52) + "</select>";
         when(select.getDomProperty("outerHTML")).thenReturn(html);
+        when(driver.getCurrentUrl()).thenReturn("https://members.teeone.golf/prat/reservas/inscripcion/20261123");
+        Field course = TeeOneAutomation.class.getDeclaredField("selectedRecorrido");
+        course.setAccessible(true);
+        course.set(automation, "TEE 1 ROSA");
         WebElement panel = mock(WebElement.class);
         var bytes = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(840, 2688, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
@@ -378,7 +382,17 @@ public class TeeOneAutomationTest {
         assertTrue(manifest.contains("sanitized-dropdown-v1"));
         assertTrue(manifest.contains("\"optionCount\": 52"));
         assertFalse(manifest.contains("<select>"));
-        verify((JavascriptExecutor) driver).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
+        Field holes = TeeOneAutomation.class.getDeclaredField("selectedHoles");
+        holes.setAccessible(true);
+        holes.set(automation, 9);
+        invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-read");
+        automation.saveTeeTimeEvidence();
+        assertTrue(java.nio.file.Files.exists(directory.resolve("20261123-rosa-p2-initial.png")));
+        assertTrue(java.nio.file.Files.exists(directory.resolve("20261123-rosa-p2-h9-initial.png")));
+        manifest = java.nio.file.Files.readString(directory.resolve("tee-time-images.json"));
+        assertTrue(manifest.contains("\"holes\": 18"));
+        assertTrue(manifest.contains("\"holes\": 9"));
+        verify((JavascriptExecutor) driver, times(2)).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
         verify((JavascriptExecutor) driver, never()).executeScript(contains("clientHeight"), any(), any());
         verify(select, never()).getScreenshotAs(any());
         verify(select, never()).click();
@@ -594,6 +608,9 @@ public class TeeOneAutomationTest {
             .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
         doAnswer(invocation -> course.get().equals("TEE 1 ROSA") ? empty : offered)
             .when(driver).findElement(By.id("HoraJuego"));
+        Field inspection = TeeOneAutomation.class.getDeclaredField("availabilityOnly");
+        inspection.setAccessible(true);
+        inspection.set(automation, true);
         invoke("inspectAllCourses", new Class<?>[]{});
         assertEquals(3, automation.getAvailabilitySnapshots().size());
         assertEquals(List.of(), automation.getAvailabilitySnapshots().get(0).get("options"));
@@ -602,6 +619,104 @@ public class TeeOneAutomationTest {
     @Test
     public void jugadoresWaitsForRequestedOption() throws Exception {
         assertDelayedChoice("Jugadores", "Plazas", "2", "2");
+    }
+
+        @Test
+        public void informationalInspectionChecksNineOnlyAfterConfirmedEmptyEighteen() throws Exception {
+        AtomicReference<String> course = new AtomicReference<>("");
+        AtomicReference<Integer> holes = new AtomicReference<>(18);
+        doReturn(dropdown(courseOption("TEE 1 ROSA", "0", course), courseOption("TEE 1 AMARILLO", "1", course)))
+            .when(driver).findElement(By.id("Recorrido"));
+        WebElement eighteen = option("18", "1");
+        WebElement nine = option("9", "2");
+        when(eighteen.isSelected()).thenAnswer(invocation -> holes.get() == 18);
+        when(nine.isSelected()).thenAnswer(invocation -> holes.get() == 9);
+        when(nine.getAttribute("index")).thenReturn("1");
+        doAnswer(invocation -> { holes.set(18); return null; }).when(eighteen).click();
+        doAnswer(invocation -> { holes.set(9); return null; }).when(nine).click();
+        doReturn(dropdown(eighteen, nine)).when(driver).findElement(By.id("Hoyos"));
+        doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
+        WebElement empty = dropdown(option("", "-1"));
+        WebElement time = option("09:00 (2)", "09:00");
+        WebElement offered = dropdown(time);
+        doAnswer(invocation -> course.get().equals("TEE 1 ROSA") && holes.get() == 18 ? empty : offered)
+            .when(driver).findElement(By.id("HoraJuego"));
+        doAnswer(invocation -> java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 1,
+            "systemOpen", true, "timeCount", course.get().equals("TEE 1 ROSA") && holes.get() == 18 ? 0 : 1))
+            .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        Field inspection = TeeOneAutomation.class.getDeclaredField("availabilityOnly");
+        inspection.setAccessible(true);
+        inspection.set(automation, true);
+        invoke("inspectAllCourses", new Class<?>[]{});
+        var snapshots = automation.getAvailabilitySnapshots();
+        assertEquals(3, snapshots.size());
+        assertEquals(18, snapshots.get(0).get("holes"));
+        assertEquals(List.of(), snapshots.get(0).get("options"));
+        assertEquals(9, snapshots.get(1).get("holes"));
+        assertFalse(((List<?>) snapshots.get(1).get("options")).isEmpty());
+        assertEquals("TEE 1 AMARILLO", snapshots.get(2).get("course"));
+        assertEquals(18, snapshots.get(2).get("holes"));
+        verify(nine, times(1)).click();
+        verify(time, never()).click();
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getReservationBlockedAt());
+        assertNull(automation.getSelectedHoraDeJuego());
+        }
+
+        @Test
+        public void nineHoleFiltersAreRejectedForBookingRuns() throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> invoke("selectCourseFilters",
+            new Class<?>[]{String.class, int.class, int.class}, "TEE 1 ROSA", 2, 9));
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        }
+
+    @Test
+    public void informationalInspectionHandlesNineOnlyCourseWithoutInventingEighteenSnapshot() throws Exception {
+        AtomicReference<String> course = new AtomicReference<>("");
+        doReturn(dropdown(courseOption("TEE 1 ROSA", "0", course), courseOption("TEE 1 AMARILLO", "1", course)))
+                .when(driver).findElement(By.id("Recorrido"));
+        WebElement nine = option("9", "2");
+        WebElement eighteen = option("18", "1");
+        WebElement nineOnly = dropdown(nine);
+        WebElement eighteenOnly = dropdown(eighteen);
+        doAnswer(invocation -> course.get().equals("TEE 1 ROSA") ? nineOnly : eighteenOnly)
+                .when(driver).findElement(By.id("Hoyos"));
+        doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
+        WebElement time = option("09:00 (2)", "09:00");
+        doReturn(dropdown(time)).when(driver).findElement(By.id("HoraJuego"));
+        Field inspection = TeeOneAutomation.class.getDeclaredField("availabilityOnly");
+        inspection.setAccessible(true);
+        inspection.set(automation, true);
+        invoke("inspectAllCourses", new Class<?>[]{});
+        var snapshots = automation.getAvailabilitySnapshots();
+        assertEquals(2, snapshots.size());
+        assertEquals(9, snapshots.get(0).get("holes"));
+        assertEquals("18-not-offered", snapshots.get(0).get("fallbackReason"));
+        assertEquals(18, snapshots.get(1).get("holes"));
+        verify(time, never()).click();
+        assertFalse(automation.isReservationSubmitted());
+    }
+
+    @Test
+    public void informationalApiFailureDoesNotTriggerNineHoleFallback() throws Exception {
+        WebElement blocked = configureCourses("TEE 1 ROSA", dropdown(option("", "-1")),
+                "TEE 1 AMARILLO", dropdown(option("", "-1")));
+        WebElement nine = option("9", "2");
+        when(nine.isSelected()).thenReturn(false);
+        when(nine.getAttribute("index")).thenReturn("1");
+        doReturn(dropdown(option("18", "1"), nine)).when(driver).findElement(By.id("Hoyos"));
+        doReturn(java.util.Map.of("pending", false, "httpStatus", 200, "apiCode", 2,
+                "systemOpen", true, "timeCount", 0))
+                .when((JavascriptExecutor) driver).executeScript(availabilityReadScript());
+        Field inspection = TeeOneAutomation.class.getDeclaredField("availabilityOnly");
+        inspection.setAccessible(true);
+        inspection.set(automation, true);
+        assertThrows(IllegalStateException.class, () -> invoke("inspectAllCourses", new Class<?>[]{}));
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        assertFalse(automation.isInformationalComplete());
+        verify(nine, never()).click();
+        verify(blocked, never()).click();
+        assertFalse(automation.isReservationSubmitted());
     }
 
     @Test

@@ -71,7 +71,7 @@ public class TeeOneAutomation {
             context.scale(2, 2);
             context.fillStyle = '#ffffff'; context.fillRect(0, 0, width, height);
             context.fillStyle = '#222222'; context.font = '14px sans-serif';
-            context.fillText(metadata.course + ' | ' + metadata.date + ' | ' + metadata.players + ' players', 16, 24);
+            context.fillText(metadata.course + ' | ' + metadata.date + ' | ' + metadata.players + ' players | ' + metadata.holes + ' holes', 16, 24);
             context.fillStyle = '#6e6e6e'; context.font = '12px sans-serif';
             context.fillText('Captured ' + metadata.capturedAt, 16, 44);
             context.fillStyle = '#fafafa'; context.fillRect(16, 58, width - 32, height - 74);
@@ -149,12 +149,13 @@ public class TeeOneAutomation {
     private ZonedDateTime reservationConfirmedAt;
     private String selectedHoraDeJuego;
     private String selectedRecorrido;
+    private int selectedHoles = 18;
     private final List<Map<String, Object>> availabilitySnapshots = new ArrayList<>();
     private Duration diagnosticRecheckDelay = Duration.ofSeconds(15);
     private Duration diagnosticObservationTimeout = Duration.ofSeconds(10);
     private Path teeTimeCaptureDirectory = Path.of("logs", "availability");
     private final Set<String> capturedTeeTimeScreenshots = new HashSet<>();
-    private record TeeTimeEvidence(String course, String date, int players, String phase, String capturedAt, String html) {}
+    private record TeeTimeEvidence(String course, String date, int players, int holes, String phase, String capturedAt, String html) {}
     private final List<TeeTimeEvidence> pendingTeeTimeEvidence = new ArrayList<>();
     private final List<Map<String, Object>> savedTeeTimeImages = new ArrayList<>();
     private final Map<String, String> observedSocioNames = new LinkedHashMap<>();
@@ -205,6 +206,7 @@ public class TeeOneAutomation {
         reservationConfirmedAt = null;
         selectedHoraDeJuego = null;
         selectedRecorrido = null;
+        selectedHoles = 18;
         availabilitySnapshots.clear();
         capturedTeeTimeScreenshots.clear();
         pendingTeeTimeEvidence.clear();
@@ -406,13 +408,29 @@ public class TeeOneAutomation {
     }
 
     private void selectCourseFilters(String recorrido, int players) {
+        selectCourseFilters(recorrido, players, 18);
+    }
+
+    private void selectCourseFilters(String recorrido, int players, int holes) {
+        if (holes != 18 && ((holes != 9 && holes != 0) || !availabilityOnly)) {
+            throw new IllegalArgumentException("Nine-hole inspection is informational only");
+        }
         selectedHoraDeJuego = null;
         horaDeJuegoDropdownOptions = null;
         installAvailabilityObserver();
         try {
             selectDropdown("Recorrido", recorrido);
             waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT, true);
-            selectDropdown("Número de hoyos", "18");
+            int chosenHoles = holes;
+            if (holes == 0) {
+                WebElement choices = waitUntilDropdownReady("Número de hoyos", option -> option.isEnabled()
+                    && (optionMatchesChoice(option, "18", canonicalOptionLabel("18"), compactOptionKey("18"))
+                    || optionMatchesChoice(option, "9", canonicalOptionLabel("9"), compactOptionKey("9"))), "18 or 9 holes");
+                chosenHoles = new Select(choices).getOptions().stream().anyMatch(option -> option.isEnabled()
+                    && optionMatchesChoice(option, "18", canonicalOptionLabel("18"), compactOptionKey("18"))) ? 18 : 9;
+            }
+            selectDropdown("Número de hoyos", String.valueOf(chosenHoles));
+            selectedHoles = chosenHoles;
             waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT, true);
             selectDropdown("Jugadores", String.valueOf(players));
             waitUntilJQueryAjaxIdle(DEFAULT_TIMEOUT, true);
@@ -442,24 +460,20 @@ public class TeeOneAutomation {
                 continue;
             }
             try {
-                selectCourseFilters(course, 2);
-                new WebDriverWait(driver, DEFAULT_TIMEOUT).until(current -> Boolean.TRUE.equals(
-                        ((JavascriptExecutor) current).executeScript("return !window.jQuery || window.jQuery.active === 0;")));
-                WebElement dropdown;
-                try {
-                    dropdown = waitUntilDropdownReady("Hora de juego", option ->
-                            !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")),
-                            "a nonblank, non-placeholder time option");
-                } catch (IllegalStateException exception) {
-                    logTeeTimeDiagnostics(2, "readiness-failure");
-                    dropdown = findSelectByLabelOrName("Hora de juego");
-                    if (!(exception.getCause() instanceof TimeoutException) || dropdown == null
-                            || !dropdown.isDisplayed() || !dropdown.isEnabled()) throw exception;
-                    requireSuccessfulEmptyAvailability();
+                inspectCourseAvailability(course, availabilityOnly ? 0 : 18);
+                Map<String, Object> initial = availabilitySnapshots.get(availabilitySnapshots.size() - 1);
+                if (availabilityOnly && selectedHoles == 9) initial.put("fallbackReason", "18-not-offered");
+                if (availabilityOnly && selectedHoles == 18 && initial.get("options") instanceof List<?> times && times.isEmpty()) {
+                    WebElement holes = findSelectByLabelOrName("Número de hoyos");
+                    boolean nineOffered = holes != null && new Select(holes).getOptions().stream().anyMatch(option ->
+                            option.isEnabled() && optionMatchesChoice(option, "9", canonicalOptionLabel("9"), compactOptionKey("9")));
+                    if (nineOffered) {
+                        log.info("No 18-hole times on {}; inspecting nine holes without booking", course);
+                        inspectCourseAvailability(course, 9);
+                    } else {
+                        log.info("Nine holes are not offered on {}; retaining the 18-hole observation", course);
+                    }
                 }
-                List<WebElement> options = new Select(dropdown).getOptions();
-                checkObservedAvailabilityResponse(options, 2);
-                captureAvailability(options, 2);
             } catch (RuntimeException exception) {
                 if (failure == null) failure = new IllegalStateException("Availability inspection incomplete");
                 failure.addSuppressed(exception);
@@ -470,27 +484,51 @@ public class TeeOneAutomation {
         if (failure != null) throw failure;
     }
 
+    private void inspectCourseAvailability(String course, int holes) {
+        selectCourseFilters(course, 2, holes);
+        new WebDriverWait(driver, DEFAULT_TIMEOUT).until(current -> Boolean.TRUE.equals(
+                ((JavascriptExecutor) current).executeScript("return !window.jQuery || window.jQuery.active === 0;")));
+        WebElement dropdown;
+        try {
+            dropdown = waitUntilDropdownReady("Hora de juego", option ->
+                    !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")),
+                    "a nonblank, non-placeholder time option");
+        } catch (IllegalStateException exception) {
+            logTeeTimeDiagnostics(2, "readiness-failure");
+            dropdown = findSelectByLabelOrName("Hora de juego");
+            if (!(exception.getCause() instanceof TimeoutException) || dropdown == null
+                    || !dropdown.isDisplayed() || !dropdown.isEnabled()) throw exception;
+            requireSuccessfulEmptyAvailability();
+        }
+        List<WebElement> options = new Select(dropdown).getOptions();
+        checkObservedAvailabilityResponse(options, 2);
+        captureAvailability(options, 2);
+    }
+
+    private record CourseVariant(String course, int holes) {}
+
     private void recheckEmptyAvailability() {
         if (driver == null || reservationSubmitted || reservationBlockedAt != null || selectedHoraDeJuego != null) return;
-        Map<String, Integer> emptyCourses = new LinkedHashMap<>();
+        Map<CourseVariant, Integer> emptyCourses = new LinkedHashMap<>();
         for (Map<String, Object> snapshot : availabilitySnapshots) {
             if (snapshot.get("options") instanceof List<?> options && options.isEmpty()
                     && snapshot.get("course") instanceof String course && !course.isBlank()
-                    && snapshot.get("players") instanceof Integer players) {
-                emptyCourses.putIfAbsent(course, players);
+                    && snapshot.get("players") instanceof Integer players && snapshot.get("holes") instanceof Integer holes) {
+                emptyCourses.putIfAbsent(new CourseVariant(course, holes), players);
             }
         }
         if (emptyCourses.isEmpty()) return;
         String originalCourse = selectedRecorrido;
+        int originalHoles = selectedHoles;
         String originalTime = selectedHoraDeJuego;
         String originalOptions = horaDeJuegoDropdownOptions;
         try {
             log.info("Empty tee-time observations: waiting {} seconds for diagnostic-only rechecks; booking will not be retried",
                     diagnosticRecheckDelay.toSeconds());
             sleep(diagnosticRecheckDelay);
-            for (Map.Entry<String, Integer> course : emptyCourses.entrySet()) {
+            for (Map.Entry<CourseVariant, Integer> course : emptyCourses.entrySet()) {
                 try {
-                    selectCourseFilters(course.getKey(), course.getValue());
+                    selectCourseFilters(course.getKey().course(), course.getValue(), course.getKey().holes());
                     awaitDiagnosticTeeTimes();
                     logTeeTimeDiagnostics(course.getValue(), "delayed-read-only");
                 } catch (RuntimeException exception) {
@@ -501,6 +539,7 @@ public class TeeOneAutomation {
             log.warn("Diagnostic tee-time rechecks interrupted; original outcome and snapshots retained");
         } finally {
             selectedRecorrido = originalCourse;
+            selectedHoles = originalHoles;
             selectedHoraDeJuego = originalTime;
             horaDeJuegoDropdownOptions = originalOptions;
         }
@@ -568,7 +607,7 @@ public class TeeOneAutomation {
             Matcher date = Pattern.compile("/inscripcion/(\\d{8})(?:[/?#]|$)").matcher(url == null ? "" : url);
             if (date.find()) playDate = date.group(1);
             String html = dropdown.getDomProperty("outerHTML");
-            if (html != null) pendingTeeTimeEvidence.add(new TeeTimeEvidence(selectedRecorrido, playDate, players, phase,
+            if (html != null) pendingTeeTimeEvidence.add(new TeeTimeEvidence(selectedRecorrido, playDate, players, selectedHoles, phase,
                     ZonedDateTime.now(ZoneId.of("Europe/Madrid")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME), html));
         } catch (RuntimeException exception) {
             log.warn("Raw tee-time HTML unavailable: phase={} course={}; original outcome retained", phase, selectedRecorrido);
@@ -580,8 +619,8 @@ public class TeeOneAutomation {
         pendingTeeTimeEvidence.clear();
         for (TeeTimeEvidence evidence : pending) {
             try {
-                teeTimeHtmlLog.info("Tee-time raw HTML: capturedAt={} phase={} course={} date={} players={} html={}",
-                        evidence.capturedAt(), evidence.phase(), evidence.course(), evidence.date(), evidence.players(), evidence.html());
+                teeTimeHtmlLog.info("Tee-time raw HTML: capturedAt={} phase={} course={} date={} players={} holes={} html={}",
+                    evidence.capturedAt(), evidence.phase(), evidence.course(), evidence.date(), evidence.players(), evidence.holes(), evidence.html());
                 saveTeeTimeScreenshots(evidence);
             } catch (RuntimeException exception) {
                 log.warn("Deferred tee-time evidence could not be saved for {}; original outcome retained", evidence.course());
@@ -606,13 +645,13 @@ public class TeeOneAutomation {
 
     private void saveTeeTimeScreenshots(TeeTimeEvidence evidence) {
         String stage = "delayed-read-only".equals(evidence.phase()) ? "delayed" : "initial";
-        String key = evidence.course() + "|" + stage;
+        String key = evidence.course() + "|" + evidence.holes() + "|" + stage;
         if (driver == null || capturedTeeTimeScreenshots.contains(key)) return;
         byte[] screenshot;
         int optionCount;
         try {
             Object rendered = ((JavascriptExecutor) driver).executeScript(RENDER_TEE_TIME_SCREENSHOT, evidence.html(),
-                    Map.of("course", String.valueOf(evidence.course()), "date", evidence.date(), "players", evidence.players(), "capturedAt", evidence.capturedAt()));
+                    Map.of("course", String.valueOf(evidence.course()), "date", evidence.date(), "players", evidence.players(), "holes", evidence.holes(), "capturedAt", evidence.capturedAt()));
             if (!(rendered instanceof Map<?, ?> state) || !(state.get("png") instanceof String png)
                     || !(state.get("optionCount") instanceof Number count) || png.isEmpty()) return;
             screenshot = Base64.getDecoder().decode(png);
@@ -628,11 +667,11 @@ public class TeeOneAutomation {
         }
         try {
             Files.createDirectories(teeTimeCaptureDirectory);
-            String file = evidence.date() + "-" + course + "-p" + evidence.players() + "-" + stage + ".png";
+            String file = evidence.date() + "-" + course + "-p" + evidence.players() + (evidence.holes() == 9 ? "-h9" : "") + "-" + stage + ".png";
             Files.write(teeTimeCaptureDirectory.resolve(file), screenshot);
             savedTeeTimeImages.add(Map.of("file", file, "course", String.valueOf(evidence.course()),
                     "playDate", evidence.date(), "players", evidence.players(), "capturedAt", evidence.capturedAt(),
-                    "stage", stage, "phase", evidence.phase(), "optionCount", optionCount));
+                    "stage", stage, "phase", evidence.phase(), "holes", evidence.holes(), "optionCount", optionCount));
             log.info("Tee-time screenshot: phase={} course={} players={} full-page={}",
                     evidence.phase(), evidence.course(), evidence.players(), file);
             capturedTeeTimeScreenshots.add(key);
@@ -1406,7 +1445,7 @@ public class TeeOneAutomation {
         snapshot.put("course", selectedRecorrido);
         snapshot.put("capturedAt", ZonedDateTime.now(ZoneId.of("Europe/Madrid")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
         snapshot.put("players", players);
-        snapshot.put("holes", 18);
+        snapshot.put("holes", selectedHoles);
         snapshot.put("options", offered);
         availabilitySnapshots.add(snapshot);
         if (offered.isEmpty()) logTeeTimeDiagnostics(players, "initial-empty");

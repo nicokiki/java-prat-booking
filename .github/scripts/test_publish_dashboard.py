@@ -200,6 +200,52 @@ class PublisherTest(unittest.TestCase):
                 (directory / "tee-time-images.json").write_text(json.dumps({**manifest, "images": [entry]}))
                 self.assertEqual(([], {}), publisher.load_screenshots(directory, self.report()))
 
+    def test_informational_nine_holes_require_a_real_fallback_and_keep_both_variants(self):
+        report = self.report()
+        report.update(outcome="Informational", participants=[], summary=
+                      "No booking row for the target date. Availability inspected for two players; nine holes checked only where 18-hole times were unavailable. No reservation attempted.")
+        report["availability"] = [{"executionId": report["executionId"], "playDate": report["playDate"],
+                "course": course, "capturedAt": "2026-11-14T20:00:02+01:00", "players": 2, "holes": 18,
+                "selectedTime": None, "options": []} for course in ["TEE 1 ROSA", "TEE 1 AMARILLO"]]
+        nine = {**report["availability"][0], "holes": 9, "options": [{"time": "09:00", "places": 4, "enabled": True}]}
+        report["availability"].append(nine)
+        clean = publisher.clean_report(report)
+        self.assertEqual([18, 18, 9], [snapshot["holes"] for snapshot in clean["availability"]])
+        invalid = {**report, "availability": [{**report["availability"][0], "options": nine["options"]}, *report["availability"][1:]]}
+        with self.assertRaises(ValueError):
+            publisher.clean_report(invalid)
+        with self.assertRaises(ValueError):
+            publisher.clean_report({**report, "requested": "Rosa 09:00"})
+        with self.assertRaises(ValueError):
+            publisher.clean_report({**report, "availability": report["availability"] + [nine]})
+        only_nine = {**report, "availability": [report["availability"][1], {**nine, "fallbackReason": "18-not-offered"}]}
+        self.assertEqual(2, len(publisher.clean_report(only_nine)["availability"]))
+        with self.assertRaises(ValueError):
+            publisher.clean_report({**report, "availability": [report["availability"][1], nine]})
+        for mutation in [{"selectedTime": "09:00"}, {"players": 4}]:
+            with self.assertRaises(ValueError):
+                publisher.clean_report({**report, "outcome": "Technical failure", "summary": "Technical failure before confirmation.",
+                    "availability": [*report["availability"][:-1], {**nine, **mutation}]})
+
+    def test_nine_and_eighteen_pngs_have_distinct_paths_and_legacy_images_default_eighteen(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = self.screenshot_fixture(directory)
+            report = self.report()
+            report["participants"] = []
+            report["availability"] = [{"executionId": report["executionId"], "playDate": report["playDate"],
+                    "course": "TEE 1 ROSA", "capturedAt": "2026-11-14T20:00:02+01:00", "players": 2,
+                    "holes": holes, "selectedTime": None, "options": []} for holes in [18, 9]]
+            nine = {**manifest["images"][0], "holes": 9, "file": "20261115-rosa-p2-h9-initial.png"}
+            (directory / nine["file"]).write_bytes((directory / manifest["images"][0]["file"]).read_bytes())
+            manifest["images"].append(nine)
+            (directory / "tee-time-images.json").write_text(json.dumps(manifest))
+            images, files = publisher.load_screenshots(directory, report)
+            self.assertEqual([18, 9], [image["holes"] for image in images])
+            self.assertEqual(2, len(files))
+            self.assertIn("data/executions/fixture-1/screenshots/rosa-9-initial.png", files)
+            self.assertEqual(images, publisher.clean_report({**report, "screenshots": images})["screenshots"])
+
 
 if __name__ == "__main__":
     unittest.main()

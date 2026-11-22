@@ -61,7 +61,10 @@ public final class BookingReport {
         result.put("summary", switch (outcome) {
             case "Confirmed" -> "Reservation success message observed.";
             case "Unavailable" -> "No eligible tee time on the checked courses. Reservation not submitted.";
-            case "Informational" -> "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.";
+                case "Informational" -> automation != null && automation.getAvailabilitySnapshots().stream()
+                    .anyMatch(snapshot -> Integer.valueOf(9).equals(snapshot.get("holes")))
+                    ? "No booking row for the target date. Availability inspected for two players; nine holes checked only where 18-hole times were unavailable. No reservation attempted."
+                    : "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.";
                 default -> automation != null && automation.isReservationSubmitted()
                     ? "Reservation submission attempted; confirmation not observed. Check TeeOne before retrying."
                     : "Booking stopped before reservation submission. Check the workflow logs.";

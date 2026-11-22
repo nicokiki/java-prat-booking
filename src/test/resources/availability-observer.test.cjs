@@ -101,7 +101,7 @@ function renderedOptions(options) {
   const text = [];
   const canvas = {getContext: () => ({scale(){},fillRect(){},strokeRect(){},fillText: value => text.push(value)}),toDataURL: () => 'data:image/png;base64,fixture'};
   const context = {
-    inputs:['<select>saved snapshot</select>',{course:'TEE 1 ROSA',date:'20261124',players:2,capturedAt:'2026-11-22T20:00:06+01:00'}],
+    inputs:['<select>saved snapshot</select>',{course:'TEE 1 ROSA',date:'20261124',players:2,holes:18,capturedAt:'2026-11-22T20:00:06+01:00'}],
     document:{createElement: name => {
       if (name === 'template') return {content:{querySelector: () => ({options,disabled:false})}};
       assert.equal(name,'canvas');

@@ -15,7 +15,8 @@ de Golf El Prat. Google Sheets supplies booking preferences; email and a public
   **+/-90 minutes**. Rosa and Amarillo fall back to each other before BLOQUEAR;
   Verde has no alternate course. There is no reservation retry after blocking
   or submission problems.
-- **No target-date row:** inspect courses for two players and 18 holes, without
+- **No target-date row:** inspect courses for two players, preferring 18 holes
+  and checking 9 only where 18-hole times are unavailable, without
   choosing a time, blocking, reserving or emailing. This is Informational only
   if the inspection completes; invalid sheet data and API errors are technical.
 - **Availability:** use DOM text when Selenium text is blank. A three-second
@@ -211,9 +212,10 @@ not when the file was written. The sanitized `dropdownHtml` remains in the norma
 log; the verbatim capture additionally retains original option values,
 attributes and any member labels. It is not full-page source or an API body.
 
-One initial full-page PNG per observed course is saved under `logs/availability/`, with
-the play date, course and player count in its filename. There can also be one
-delayed-recheck PNG per course. Readiness and filter failures are queued too.
+One initial full-page PNG per observed course/hole variant is saved under `logs/availability/`, with
+the play date, course and player count in its filename. Nine-hole filenames add
+`-h9`; eighteen-hole names stay unchanged. There can also be one delayed-recheck
+PNG per variant. Readiness and filter failures are queued too.
 After the flow, an off-screen canvas renders every saved option into one tall
 PNG, without the viewport clipping native-select screenshots can cause.
 Only time/capacity labels and selected/disabled states are drawn; member-name
@@ -228,7 +230,7 @@ file work happen afterward, with no added availability requests or reservation r
 
 Raw HTML may contain private member labels and is **never** sent to the dashboard,
 public report JSON, CSV or email. A separate `tee-time-images.json` manifest identifies
-the sanitized PNGs by execution, course, stage and original capture time.
+the sanitized PNGs by execution, course, holes, stage and original capture time.
 The publisher copies only these validated PNGs into
 `data/executions/EXECUTION_ID/screenshots/` in the dashboard repository and adds
 allowlisted `screenshots` references to that execution. Only settled Initial/Recheck
@@ -495,7 +497,7 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 ## Flow (summary)
 
 1. Load configuration; resolve **target date** and read the matching **Google Sheet** row.
-2. If there is no row but valid sheet headers, inspect Rosa, Amarillo and offered Verde for two players and 18 holes; never select a time or reserve. Sheet/configuration failures remain technical.
+2. If there is no row but valid sheet headers, inspect Rosa, Amarillo and offered Verde for two players, preferring 18 holes and checking 9 only where 18-hole times are unavailable; never select a time or reserve. Sheet/configuration failures remain technical.
 3. For either browser path, apply the configured **Europe/Madrid** waits unless bypassed, open the date's page, log in, and install the passive availability-response observer.
 4. For a booking row, fill **Recorrido**, **Número de hoyos**, **Jugadores**, **Hora de juego**; select an eligible time, click **BLOQUEAR**, verify additional socios, then **RESERVAR**.
 5. Save the structured result before any booking email; include the last inspected time-option labels when available. Availability-only runs do not email. Diagnostic rechecks preserve initial snapshots and do not retry reservations.
@@ -656,8 +658,15 @@ publication failures never rerun the booking.
 
 If the sheet has valid headers but no row for the target play date, the same
 scheduled run inspects **Rosa and Amarillo**, plus **Verde when offered** in the
-Recorrido dropdown, always selecting **2 players**
-and **18 holes**. It records all offered tee-time options without a requested-time
+Recorrido dropdown, always selecting **2 players** and preferring **18 holes**.
+Only in this availability-only mode, a confirmed successful, completed, open-system
+response with no 18-hole times triggers a **9-hole** check when offered. Both
+observations are retained separately, including an empty nine-hole result.
+If the hole selector offers only nine, the nine-hole snapshot records
+`fallbackReason: "18-not-offered"`; no empty eighteen-hole snapshot is invented.
+Pending, closed-system, malformed and failed responses remain technical failures,
+not fallback triggers. Booking runs remain eighteen-only.
+It records all offered tee-time options without a requested-time
 window. It never selects a tee time, clicks BLOQUEAR, adds socios, or submits a
 reservation. Verde's absence is normal: it is skipped without a selection timeout
 or a fabricated empty snapshot. A complete inspection produces an `Informational` dashboard result
@@ -686,8 +695,10 @@ Informational runs and failures before preferences were loaded. Timing medians
 use Confirmed cases only: form start to BLOQUEAR and form start to confirmation,
 with separate sample counts and no substitution of workflow startup time.
 
-Member-view availability uses the **earliest saved snapshot per course and play
-date**, for two players and 18 holes, so retries do not add sample days. A later
+Member-view availability uses the **earliest saved snapshot per course, hole count and play
+date**, for two players, so retries do not add sample days. History and analysis
+default to eighteen holes and provide a separate nine-hole selector. Nine-hole
+samples are conditional fallback observations, not a complete survey. A later
 manual execution can contain times that do not appear in that daily snapshot;
 select the execution in history to inspect its own observations. Friday/weekend
 groups use play dates, not execution dates.

@@ -16,6 +16,7 @@ SUMMARIES = {
     "Reservation submission attempted; confirmation not observed. Check TeeOne before retrying.",
     "Booking stopped before reservation submission. Check the workflow logs.",
     "No booking row for the target date. Availability inspected for two players and 18 holes; no reservation attempted.",
+    "No booking row for the target date. Availability inspected for two players; nine holes checked only where 18-hole times were unavailable. No reservation attempted.",
 }
 FIELDS = {
     "schemaVersion", "executionId", "executionDate", "startedAt", "finishedAt", "playDate",
@@ -26,7 +27,7 @@ COURSES = {"TEE 1 ROSA": "rosa", "TEE 1 AMARILLO": "amarillo", "TEE 1 VERDE": "v
 
 
 def clean_screenshots(images, report):
-    if not isinstance(images, list) or len(images) > 6:
+    if not isinstance(images, list) or len(images) > 12:
         raise ValueError("Invalid screenshot list")
     clean = []
     seen = set()
@@ -34,9 +35,14 @@ def clean_screenshots(images, report):
         if not isinstance(image, dict):
             raise ValueError("Invalid screenshot metadata")
         course, stage = image.get("course"), image.get("stage")
-        if course not in COURSES or stage not in {"initial", "recheck"} or (course, stage) in seen:
+        holes = image.get("holes", 18)
+        if type(holes) is not int or holes not in {9, 18}:
+            raise ValueError("Invalid screenshot hole count")
+        if holes == 9 and not any(snapshot.get("course") == course and snapshot.get("holes") == 9 for snapshot in report.get("availability", [])):
+            raise ValueError("Nine-hole screenshot has no matching observation")
+        if course not in COURSES or stage not in {"initial", "recheck"} or (course, holes, stage) in seen:
             raise ValueError("Invalid or duplicate screenshot course/stage")
-        path = "data/executions/" + report["executionId"] + "/screenshots/" + COURSES[course] + "-" + stage + ".png"
+        path = "data/executions/" + report["executionId"] + "/screenshots/" + COURSES[course] + ("-9" if holes == 9 else "") + "-" + stage + ".png"
         if image.get("path") != path or image.get("playDate") != report["playDate"]:
             raise ValueError("Screenshot belongs to another execution or play date")
         timestamp = datetime.fromisoformat(image["capturedAt"])
@@ -50,7 +56,8 @@ def clean_screenshots(images, report):
             raise ValueError("Invalid screenshot option count")
         clean.append({key: image[key] for key in
                       ("path", "course", "stage", "playDate", "capturedAt", "players", "optionCount")})
-        seen.add((course, stage))
+        clean[-1]["holes"] = holes
+        seen.add((course, holes, stage))
     return clean
 
 
@@ -103,7 +110,7 @@ def load_screenshots(directory, report):
     manifest = json.loads(manifest_path.read_text())
     if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1 or manifest.get("rendering") != "sanitized-dropdown-v1" or manifest.get("executionId") != report["executionId"]:
         raise ValueError("Screenshot manifest provenance does not match execution")
-    if not isinstance(manifest.get("images"), list) or len(manifest["images"]) > 6:
+    if not isinstance(manifest.get("images"), list) or len(manifest["images"]) > 12:
         raise ValueError("Invalid screenshot manifest")
     images, files = [], {}
     for entry in manifest["images"]:
@@ -114,11 +121,16 @@ def load_screenshots(directory, report):
         stage = {"initial": "initial", "delayed": "recheck"}.get(entry.get("stage"))
         if stage is None or (entry["phase"] == "delayed-read-only") != (stage == "recheck"):
             raise ValueError("Invalid screenshot stage")
-        expected = report["playDate"].replace("-", "") + "-" + COURSES[entry["course"]] + "-p" + str(entry.get("players")) + "-" + entry["stage"] + ".png"
+        holes = entry.get("holes", 18)
+        if type(holes) is not int or holes not in {9, 18}:
+            raise ValueError("Invalid screenshot hole count")
+        if holes == 9 and not any(snapshot.get("course") == entry["course"] and snapshot.get("holes") == 9 for snapshot in report.get("availability", [])):
+            continue
+        expected = report["playDate"].replace("-", "") + "-" + COURSES[entry["course"]] + "-p" + str(entry.get("players")) + ("-h9" if holes == 9 else "") + "-" + entry["stage"] + ".png"
         if entry.get("file") != expected or entry.get("playDate") != report["playDate"].replace("-", ""):
             raise ValueError("Unsafe screenshot file or mismatched play date")
         image = {key: entry.get(key) for key in ("course", "capturedAt", "players", "optionCount")}
-        image.update(stage=stage, playDate=report["playDate"], path="data/executions/" + report["executionId"] + "/screenshots/" + COURSES[entry["course"]] + "-" + stage + ".png")
+        image.update(stage=stage, holes=holes, playDate=report["playDate"], path="data/executions/" + report["executionId"] + "/screenshots/" + COURSES[entry["course"]] + ("-9" if holes == 9 else "") + "-" + stage + ".png")
         images.append(image)
         clean_screenshots(images, report)
         files[image["path"]] = public_png(directory / expected, image["optionCount"])
@@ -167,6 +179,12 @@ def clean_report(report):
         datetime.fromisoformat(snapshot["capturedAt"])
         if not isinstance(snapshot["course"], str) or len(snapshot["course"]) > 100:
             raise ValueError("Invalid course")
+        if type(snapshot["holes"]) is not int or snapshot["holes"] not in {9, 18}:
+            raise ValueError("Invalid snapshot hole count")
+        if observation.get("fallbackReason") is not None:
+            if observation["fallbackReason"] != "18-not-offered" or snapshot["holes"] != 9:
+                raise ValueError("Invalid nine-hole fallback reason")
+            snapshot["fallbackReason"] = "18-not-offered"
         snapshot["options"] = []
         for offered in observation.get("options", []):
             if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", offered.get("time", "")):
@@ -178,6 +196,15 @@ def clean_report(report):
                 raise ValueError("Invalid enabled state")
             snapshot["options"].append({key: offered.get(key) for key in ("time", "places", "enabled")})
         clean["availability"].append(snapshot)
+    for snapshot in clean["availability"]:
+        if snapshot["holes"] != 9:
+            continue
+        if snapshot["players"] != 2 or snapshot["selectedTime"] is not None or clean["players"] != 2 or clean["participants"] or any(clean[key] is not None for key in
+                ("requested", "booked", "bookingFormStartedAt", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
+            raise ValueError("Nine-hole fallback is observation-only")
+        eighteen = next((item for item in clean["availability"] if item["course"] == snapshot["course"] and item["holes"] == 18), None)
+        if eighteen is not None and eighteen["options"] or eighteen is None and snapshot.get("fallbackReason") != "18-not-offered":
+            raise ValueError("Nine-hole fallback requires empty eighteen-hole times or eighteen not offered")
     if report.get("screenshots"):
         clean["screenshots"] = clean_screenshots(report["screenshots"], clean)
     if clean["outcome"] == "Informational":
@@ -185,12 +212,13 @@ def clean_report(report):
                 ("requested", "booked", "bookingFormStartedAt", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
             raise ValueError("Informational report cannot claim booking activity or participants")
         courses = {snapshot["course"] for snapshot in clean["availability"]}
-        if len(clean["availability"]) != len(courses) or courses not in (
+        variants = {(snapshot["course"], snapshot["holes"]) for snapshot in clean["availability"]}
+        if len(clean["availability"]) != len(variants) or courses not in (
                 {"TEE 1 ROSA", "TEE 1 AMARILLO"}, {"TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"}):
             raise ValueError("Informational report must inspect Rosa and Amarillo, with Verde optional")
-        if any(snapshot["players"] != 2 or snapshot["holes"] != 18 or snapshot["selectedTime"] is not None
+        if any(snapshot["players"] != 2 or snapshot["selectedTime"] is not None
                for snapshot in clean["availability"]):
-            raise ValueError("Informational snapshots must use two players, 18 holes and no selected time")
+            raise ValueError("Informational snapshots must use two players and no selected time")
     return clean
 
 
