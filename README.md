@@ -505,6 +505,7 @@ If the JVM starts **after** these times, the code does **not** wait backwards; i
 2. If there is no row but valid sheet headers, inspect Rosa, Amarillo and offered Verde for two players, preferring 18 holes and checking 9 only where 18-hole times are unavailable; never select a time or reserve. Sheet/configuration failures remain technical.
 3. For either browser path, apply the configured **Europe/Madrid** waits unless bypassed, open the date's page, log in, and install the passive availability-response observer.
 4. For a booking row, fill **Recorrido**, **Número de hoyos**, **Jugadores**, **Hora de juego**; select an eligible time, click **BLOQUEAR**, verify additional socios, then **RESERVAR**.
+  After confirmation, inspect unobserved Rosa, Amarillo and offered Verde for the same player count and 18 holes. If both booking choices have no match, inspect the remaining courses without another booking attempt. Keep every attempted course's original snapshot; follow-up errors never replace the reservation outcome.
 5. Save the structured result before any booking email; include the last inspected time-option labels when available. Availability-only runs do not email. Diagnostic rechecks preserve initial snapshots and do not retry reservations.
 6. On GitHub Actions, back up the saved report and publish its allowlisted data to the public dashboard. Notification or publication failures do not retry the booking.
 
@@ -546,7 +547,8 @@ fresh course/hole/player selections and the same original Horario and
 90-minute window. Thus requested Rosa at 08:30 can select Rosa at 10:00 before
 considering Amarillo at 08:25. Verde has no alternate-course fallback.
 Success emails report the actual selected course and time in both subject and
-booking details. The option list is from the last course inspected.
+booking details. The option list remains from the selected booking course (or
+last attempted course if no time matched), not the later read-only scan.
 
 Filter changes are sequential: select Recorrido, wait for AJAX to finish, select
 18 holes, wait again, then select the player count and wait before reading times.

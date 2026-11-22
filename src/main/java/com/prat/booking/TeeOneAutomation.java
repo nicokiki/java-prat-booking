@@ -279,13 +279,14 @@ public class TeeOneAutomation {
         try {
             fillBookingForm(data);
         } catch (NoSuitableTeeTimeException unavailable) {
-            recheckEmptyAvailability();
+            inspectRemainingCourses(url, data.getSocios());
             throw unavailable;
         }
         captureBookingHolder();
         addSocios(data);
         confirmReservation();
         sleep(Duration.ofMillis(1500));
+        inspectRemainingCourses(url, data.getSocios());
     }
 
     private void initDriverIfNeeded() {
@@ -468,6 +469,28 @@ public class TeeOneAutomation {
     }
 
     private void inspectAllCourses() {
+        inspectAllCourses(2, false);
+    }
+
+    private void inspectRemainingCourses(String url, int players) {
+        String originalCourse = selectedRecorrido;
+        int originalHoles = selectedHoles;
+        String originalTime = selectedHoraDeJuego;
+        String originalOptions = horaDeJuegoDropdownOptions;
+        try {
+            if (reservationSubmitted || reservationBlockedAt != null) driver.get(url);
+            inspectAllCourses(players, true);
+        } catch (RuntimeException exception) {
+            log.warn("Post-booking availability inspection incomplete; reservation outcome and existing snapshots retained", exception);
+        } finally {
+            selectedRecorrido = originalCourse;
+            selectedHoles = originalHoles;
+            selectedHoraDeJuego = originalTime;
+            horaDeJuegoDropdownOptions = originalOptions;
+        }
+    }
+
+    private void inspectAllCourses(int players, boolean unobservedOnly) {
         WebElement courseDropdown = waitUntilDropdownReady("Recorrido", option ->
             !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")), "available course options");
         boolean verdeOffered = new Select(courseDropdown).getOptions().stream().anyMatch(option ->
@@ -478,8 +501,13 @@ public class TeeOneAutomation {
                 log.info("Verde is not offered for this date; skipping");
                 continue;
             }
+            if (unobservedOnly && availabilitySnapshots.stream().anyMatch(snapshot ->
+                    snapshot.get("course") instanceof String observed && canonicalOptionLabel(observed).equals(canonicalOptionLabel(course))
+                    && Integer.valueOf(players).equals(snapshot.get("players")) && Integer.valueOf(18).equals(snapshot.get("holes")))) {
+                continue;
+            }
             try {
-                inspectCourseAvailability(course, availabilityOnly ? 0 : 18);
+                inspectCourseAvailability(course, players, availabilityOnly ? 0 : 18);
                 Map<String, Object> initial = availabilitySnapshots.get(availabilitySnapshots.size() - 1);
                 if (availabilityOnly && selectedHoles == 9) initial.put("fallbackReason", "18-not-offered");
                 if (availabilityOnly && selectedHoles == 18 && initial.get("options") instanceof List<?> times && times.isEmpty()) {
@@ -488,7 +516,7 @@ public class TeeOneAutomation {
                             option.isEnabled() && optionMatchesChoice(option, "9", canonicalOptionLabel("9"), compactOptionKey("9")));
                     if (nineOffered) {
                         log.info("No 18-hole times on {}; inspecting nine holes without booking", course);
-                        inspectCourseAvailability(course, 9);
+                        inspectCourseAvailability(course, players, 9);
                     } else {
                         log.info("Nine holes are not offered on {}; retaining the 18-hole observation", course);
                     }
@@ -503,8 +531,8 @@ public class TeeOneAutomation {
         if (failure != null) throw failure;
     }
 
-    private void inspectCourseAvailability(String course, int holes) {
-        selectCourseFilters(course, 2, holes);
+    private void inspectCourseAvailability(String course, int players, int holes) {
+        selectCourseFilters(course, players, holes);
         new WebDriverWait(driver, DEFAULT_TIMEOUT).until(current -> Boolean.TRUE.equals(
                 ((JavascriptExecutor) current).executeScript("return !window.jQuery || window.jQuery.active === 0;")));
         WebElement dropdown;
@@ -513,15 +541,15 @@ public class TeeOneAutomation {
                     !optionVisibleText(option).isBlank() && !"-1".equals(option.getAttribute("value")),
                     "a nonblank, non-placeholder time option");
         } catch (IllegalStateException exception) {
-            logTeeTimeDiagnostics(2, "readiness-failure");
+            logTeeTimeDiagnostics(players, "readiness-failure");
             dropdown = findSelectByLabelOrName("Hora de juego");
             if (!(exception.getCause() instanceof TimeoutException) || dropdown == null
                     || !dropdown.isDisplayed() || !dropdown.isEnabled()) throw exception;
             requireSuccessfulEmptyAvailability();
         }
         List<WebElement> options = new Select(dropdown).getOptions();
-        checkObservedAvailabilityResponse(options, 2);
-        captureAvailability(options, 2);
+        checkObservedAvailabilityResponse(options, players);
+        captureAvailability(options, players);
     }
 
     private record CourseVariant(String course, int holes) {}

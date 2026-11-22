@@ -690,6 +690,95 @@ public class TeeOneAutomationTest {
         assertDelayedChoice("Jugadores", "Plazas", "2", "2");
     }
 
+    @Test
+    public void postBookingInspectionKeepsReservationAndRecordsOnlyRemainingCourses() throws Exception {
+        WebElement rosaTime = option("08:30 (4)", "08:30");
+        WebElement amarilloTime = option("09:00 (3)", "09:00");
+        configureCourses("TEE 1 ROSA", dropdown(rosaTime), "TEE 1 AMARILLO", dropdown(amarilloTime));
+        doReturn(dropdown(option("3", "3"))).when(driver).findElement(By.id("Plazas"));
+        invoke("selectCourseAndTime", new Class<?>[]{BookingData.class, String.class},
+                new BookingData("20261124", "TEE 1 ROSA", "08:30", 3, List.of()), "TEE 1 ROSA");
+        String originalOptions = automation.getHoraDeJuegoDropdownOptions();
+        ZonedDateTime confirmedAt = ZonedDateTime.now();
+        for (String name : List.of("reservationSubmitted", "reservationSuccess")) {
+            Field field = TeeOneAutomation.class.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(automation, true);
+        }
+        Field confirmed = TeeOneAutomation.class.getDeclaredField("reservationConfirmedAt");
+        confirmed.setAccessible(true);
+        confirmed.set(automation, confirmedAt);
+        clearInvocations(driver, rosaTime, amarilloTime);
+
+        invoke("inspectRemainingCourses", new Class<?>[]{String.class, int.class}, "https://fixture.invalid/20261124", 3);
+
+        assertEquals(List.of("TEE 1 ROSA", "TEE 1 AMARILLO"), automation.getAvailabilitySnapshots().stream()
+                .map(snapshot -> snapshot.get("course")).toList());
+        assertTrue(automation.getAvailabilitySnapshots().stream().allMatch(snapshot -> Integer.valueOf(3).equals(snapshot.get("players"))));
+        assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
+        assertEquals("08:30", automation.getSelectedHoraDeJuego());
+        assertEquals(originalOptions, automation.getHoraDeJuegoDropdownOptions());
+        assertTrue(automation.isReservationSubmitted());
+        assertEquals(Boolean.TRUE, automation.getReservationSuccess());
+        assertEquals(confirmedAt, automation.getReservationConfirmedAt());
+        verify(driver).get("https://fixture.invalid/20261124");
+        verify(rosaTime, never()).click();
+        verify(amarilloTime, never()).click();
+        assertTrue(mockingDetails(driver).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("findElement"))
+                .noneMatch(invocation -> invocation.getArgument(0).toString().contains("Bloquear")
+                        || invocation.getArgument(0).toString().contains("Reservar")));
+    }
+
+        @Test
+        public void postBookingNavigationFailureDoesNotChangeConfirmedOutcome() throws Exception {
+        Field submitted = TeeOneAutomation.class.getDeclaredField("reservationSubmitted");
+        submitted.setAccessible(true);
+        submitted.set(automation, true);
+        Field success = TeeOneAutomation.class.getDeclaredField("reservationSuccess");
+        success.setAccessible(true);
+        success.set(automation, true);
+        doThrow(new WebDriverException("Fixture navigation failed")).when(driver).get(anyString());
+
+        invoke("inspectRemainingCourses", new Class<?>[]{String.class, int.class}, "https://fixture.invalid/20261124", 2);
+
+        assertTrue(automation.isReservationSubmitted());
+        assertEquals(Boolean.TRUE, automation.getReservationSuccess());
+        assertTrue(automation.getAvailabilitySnapshots().isEmpty());
+        verify(driver, never()).findElement(any(By.class));
+        }
+
+        @Test
+        public void bookingWithoutMatchingTimeStillInspectsVerdeWithoutAnotherBookingAttempt() throws Exception {
+        AtomicReference<String> course = new AtomicReference<>("");
+        doReturn(dropdown(courseOption("TEE 1 ROSA", "0", course), courseOption("TEE 1 AMARILLO", "1", course),
+            courseOption("TEE 1 VERDE", "2", course))).when(driver).findElement(By.id("Recorrido"));
+        doReturn(dropdown(option("18", "1"))).when(driver).findElement(By.id("Hoyos"));
+        doReturn(dropdown(option("2", "2"))).when(driver).findElement(By.id("Plazas"));
+        WebElement outsideWindow = option("10:15 (4)", "10:15");
+        WebElement verdeTime = option("08:30 (4)", "08:30");
+        doAnswer(invocation -> dropdown("TEE 1 VERDE".equals(course.get()) ? verdeTime : outsideWindow))
+            .when(driver).findElement(By.id("HoraJuego"));
+        Field initialized = TeeOneAutomation.class.getDeclaredField("initialized");
+        initialized.setAccessible(true);
+        initialized.set(automation, true);
+        doThrow(new WebDriverException("Fixture already logged in")).when(driver).findElement(By.cssSelector(
+            "input[type='text'], input[name='username'], input[id*='user'], input[placeholder*='Usuario']"));
+        try (var config = mockStatic(Config.class)) {
+            config.when(Config::skipMadridTimeWait).thenReturn(true);
+            assertThrows(NoSuchElementException.class, () -> automation.performBooking(
+                new BookingData("20261124", "TEE 1 ROSA", "08:30", 2, List.of())));
+        }
+
+        assertEquals(List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE"), automation.getAvailabilitySnapshots().stream()
+            .map(snapshot -> snapshot.get("course")).toList());
+        assertTrue(automation.isBookingUnavailable());
+        assertFalse(automation.isReservationSubmitted());
+        assertNull(automation.getReservationBlockedAt());
+        verify(verdeTime, never()).click();
+        verify(driver, never()).findElement(By.id("EnviarInscripcion"));
+        }
+
         @Test
         public void informationalInspectionChecksNineOnlyAfterConfirmedEmptyEighteen() throws Exception {
         AtomicReference<String> course = new AtomicReference<>("");
@@ -1055,6 +1144,9 @@ public class TeeOneAutomationTest {
 
         assertEquals("TEE 1 ROSA", automation.getSelectedRecorrido());
         assertEquals("08:30", automation.getSelectedHoraDeJuego());
+        assertEquals(List.of("TEE 1 AMARILLO", "TEE 1 ROSA"), automation.getAvailabilitySnapshots().stream()
+            .map(snapshot -> snapshot.get("course")).toList());
+        assertEquals("10:05", ((java.util.Map<?, ?>) ((List<?>) automation.getAvailabilitySnapshots().get(0).get("options")).get(0)).get("time"));
         verify(bloquear, times(1)).click();
     }
 
