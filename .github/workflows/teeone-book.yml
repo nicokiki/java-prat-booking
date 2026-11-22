@@ -179,7 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           # Remove build-time mock captures before recording the live execution.
-          rm -f logs/availability/*.log logs/availability/*.png
+          rm -f logs/availability/*.log logs/availability/*.png logs/availability/tee-time-images.json
           echo "live=true" >> "$GITHUB_OUTPUT"
           java -jar target/teeone-booking-jar-with-dependencies.jar
 
@@ -232,7 +232,11 @@ jobs:
         run: |
           git -C .dashboard config user.name "github-actions[bot]"
           git -C .dashboard config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          python3 .github/scripts/publish_dashboard.py results/booking-result.json .dashboard
+          if [[ "${{ steps.booking_execution.outputs.live }}" == "true" ]]; then
+            python3 .github/scripts/publish_dashboard.py results/booking-result.json .dashboard --diagnostics logs/availability
+          else
+            python3 .github/scripts/publish_dashboard.py results/booking-result.json .dashboard
+          fi
 
       - name: Dashboard publication setup required
         if: always() && steps.report.outputs.available == 'true' && env.DASHBOARD_PUBLISH_ENABLED != 'true'

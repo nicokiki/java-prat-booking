@@ -1,7 +1,9 @@
 import importlib.util
 import json
 import tempfile
+import struct
 import unittest
+import zlib
 from unittest.mock import patch
 from types import SimpleNamespace
 from pathlib import Path
@@ -91,6 +93,112 @@ class PublisherTest(unittest.TestCase):
         report["bookingFormStartedAt"] = "2026-11-14T20:00:01"
         with self.assertRaises(ValueError):
             publisher.clean_report(report)
+
+    def screenshot_fixture(self, directory):
+        def chunk(kind, payload):
+            return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+        header = struct.pack(">IIBBBBB", 840, 288, 8, 2, 0, 0, 0)
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"tEXt", b"private\0NEVER-PUBLISH") + chunk(b"IDAT", zlib.compress(b"\0" * ((840 * 3 + 1) * 288))) + chunk(b"IEND", b"")
+        entry = {"course": "TEE 1 ROSA", "stage": "initial", "playDate": "20261115", "players": 2,
+                 "capturedAt": "2026-11-14T20:00:06+01:00", "optionCount": 2,
+                 "phase": "initial-read", "file": "20261115-rosa-p2-initial.png"}
+        manifest = {"schemaVersion": 1, "rendering": "sanitized-dropdown-v1", "executionId": "fixture-1", "images": [entry]}
+        (directory / entry["file"]).write_bytes(png)
+        (directory / "tee-time-images.json").write_text(json.dumps(manifest))
+        (directory / "tee-time-html.log").write_text("NEVER-PUBLISH raw HTML")
+        return manifest
+
+    def test_pngs_are_per_execution_allowlisted_and_metadata_stripped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.screenshot_fixture(directory)
+            images, files = publisher.load_screenshots(directory, self.report())
+            report = publisher.clean_report({**self.report(), "screenshots": images})
+            self.assertEqual("data/executions/fixture-1/screenshots/rosa-initial.png", report["screenshots"][0]["path"])
+            self.assertEqual(1, len(files))
+            self.assertNotIn(b"NEVER-PUBLISH", next(iter(files.values())))
+            archive = directory / "executions.json"
+            archive.write_text(json.dumps({"schemaVersion": 1, "executions": [report]}))
+            self.assertEqual(images, publisher.merge_report(archive, self.report())["executions"][0]["screenshots"])
+
+    def test_manifest_rejects_wrong_execution_unsafe_paths_and_invalid_png(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = self.screenshot_fixture(directory)
+            for update in [{"executionId": "other-run"}, {"rendering": "raw-html"},
+                           {"images": [{**manifest["images"][0], "file": "../secret.png"}]},
+                           {"images": [{**manifest["images"][0], "players": 3}]}]:
+                (directory / "tee-time-images.json").write_text(json.dumps({**manifest, **update}))
+                with self.assertRaises(ValueError):
+                    publisher.load_screenshots(directory, self.report())
+            (directory / "tee-time-images.json").write_text(json.dumps(manifest))
+            (directory / manifest["images"][0]["file"]).write_bytes(b"not a PNG")
+            with self.assertRaises(ValueError):
+                publisher.load_screenshots(directory, self.report())
+
+    def test_image_dry_run_writes_nothing_and_bad_images_do_not_block_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.screenshot_fixture(directory)
+            repository = directory / "dashboard"
+            repository.mkdir()
+            source = directory / "report.json"
+            source.write_text(json.dumps(self.report()))
+            args = ["publisher", str(source), str(repository), "--diagnostics", str(directory)]
+            with patch("sys.argv", args + ["--dry-run"]):
+                publisher.main()
+            self.assertEqual([], list(repository.iterdir()))
+            (directory / "20261115-rosa-p2-initial.png").write_bytes(b"invalid")
+            with patch("sys.argv", args), patch.object(publisher.subprocess, "run", return_value=SimpleNamespace(returncode=1)):
+                with patch.object(publisher.subprocess, "check_output", return_value=b'{"schemaVersion":1,"executions":[]}'):
+                    with self.assertRaises(RuntimeError):
+                        publisher.main()
+            report = json.loads((repository / "data" / "executions.json").read_text())["executions"][0]
+            self.assertNotIn("screenshots", report)
+
+    def test_publication_copies_and_stages_pngs_without_raw_logs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.screenshot_fixture(directory)
+            repository = directory / "dashboard"
+            repository.mkdir()
+            source = directory / "report.json"
+            source.write_text(json.dumps(self.report()))
+            def run(command, **kwargs):
+                return SimpleNamespace(returncode=1 if command[1] == "diff" else 0)
+            with patch("sys.argv", ["publisher", str(source), str(repository), "--diagnostics", str(directory)]), \
+                    patch.object(publisher.subprocess, "run", side_effect=run) as commands:
+                publisher.main()
+            relative = "data/executions/fixture-1/screenshots/rosa-initial.png"
+            self.assertTrue((repository / relative).exists())
+            self.assertNotIn(b"NEVER-PUBLISH", (repository / relative).read_bytes())
+            self.assertFalse(list(repository.rglob("*.log")))
+            self.assertFalse(list(repository.rglob("tee-time-images.json")))
+            commands.assert_any_call(["git", "add", "--", "data/executions.json", relative], cwd=repository.resolve(), check=True)
+            published = json.loads((repository / "data" / "executions.json").read_text())["executions"][0]
+            self.assertEqual(relative, published["screenshots"][0]["path"])
+
+    def test_malformed_manifest_and_header_only_png_fail_safely(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = self.screenshot_fixture(directory)
+            for invalid in [[], {**manifest, "images": [None]}]:
+                (directory / "tee-time-images.json").write_text(json.dumps(invalid))
+                with self.assertRaises(ValueError):
+                    publisher.load_screenshots(directory, self.report())
+            (directory / "tee-time-images.json").write_text(json.dumps(manifest))
+            (directory / manifest["images"][0]["file"]).write_bytes(b"\x89PNG\r\n\x1a\n")
+            with self.assertRaises(ValueError):
+                publisher.load_screenshots(directory, self.report())
+
+    def test_unsettled_filter_and_readiness_failure_captures_are_not_published(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = self.screenshot_fixture(directory)
+            for phase in ["filter-failure", "readiness-failure"]:
+                entry = {**manifest["images"][0], "phase": phase}
+                (directory / "tee-time-images.json").write_text(json.dumps({**manifest, "images": [entry]}))
+                self.assertEqual(([], {}), publisher.load_screenshots(directory, self.report()))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 package com.prat.booking;
 
+import com.google.api.client.json.gson.GsonFactory;
 import org.openqa.selenium.By;
 import org.openqa.selenium.ElementClickInterceptedException;
 import org.openqa.selenium.JavascriptExecutor;
@@ -34,6 +35,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Locale;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -51,28 +53,37 @@ public class TeeOneAutomation {
             const template = document.createElement('template');
             template.innerHTML = arguments[0];
             const source = template.content.querySelector('select');
-            if (!source) return null;
-            const panel = document.createElement('div');
-            panel.style.cssText = 'position:fixed;left:10px;top:10px;z-index:2147483647;width:360px;padding:12px;background:white;color:black;font:16px sans-serif';
-            const shadow = panel.attachShadow({mode: 'open'});
-            const title = document.createElement('div');
+            if (!source || source.options.length > 500) return null;
             const metadata = arguments[1];
-            title.textContent = metadata.course + ' | ' + metadata.date + ' | ' + metadata.players + ' players | ' + metadata.capturedAt;
-            title.style.cssText = 'margin-bottom:8px;font:14px sans-serif';
-            const dropdown = document.createElement('select');
-            dropdown.style.cssText = 'width:100%;height:auto;font:16px sans-serif';
-            dropdown.disabled = source.disabled;
+            const rows = [];
             for (const original of source.options) {
-                const option = document.createElement('option');
-                option.textContent = original.label || original.textContent;
-                option.disabled = original.disabled;
-                option.selected = original.selected;
-                dropdown.append(option);
+                const label = String(original.label || original.textContent || '').trim();
+                const safe = label.match(/^((?:[01]\\d|2[0-3]):[0-5]\\d)(?:\\s*\\((\\d{1,2})\\))?/);
+                rows.push({label: safe ? safe[1] + (safe[2] ? ' (' + safe[2] + ')' : '') : label ? '[redacted]' : '',
+                    disabled: source.disabled || original.disabled, selected: original.selected});
             }
-            dropdown.size = Math.max(2, Math.min(dropdown.options.length, 20));
-            shadow.append(title, dropdown);
-            document.body.append(panel);
-            return {panel: panel, pages: Math.max(1, Math.ceil(Math.min(dropdown.options.length, 100) / 20))};
+            const width = 420;
+            const height = Math.max(140, 96 + rows.length * 24);
+            const canvas = document.createElement('canvas');
+            canvas.width = width * 2;
+            canvas.height = height * 2;
+            const context = canvas.getContext('2d');
+            context.scale(2, 2);
+            context.fillStyle = '#ffffff'; context.fillRect(0, 0, width, height);
+            context.fillStyle = '#222222'; context.font = '14px sans-serif';
+            context.fillText(metadata.course + ' | ' + metadata.date + ' | ' + metadata.players + ' players', 16, 24);
+            context.fillStyle = '#6e6e6e'; context.font = '12px sans-serif';
+            context.fillText('Captured ' + metadata.capturedAt, 16, 44);
+            context.fillStyle = '#fafafa'; context.fillRect(16, 58, width - 32, height - 74);
+            context.strokeStyle = '#999999'; context.strokeRect(16.5, 58.5, width - 33, height - 75);
+            context.font = '16px sans-serif';
+            rows.forEach((row, index) => {
+                const top = 62 + index * 24;
+                if (row.selected) { context.fillStyle = '#e5f0ff'; context.fillRect(18, top - 2, width - 36, 24); }
+                context.fillStyle = row.disabled ? '#777777' : '#222222';
+                context.fillText(row.label, 24, top + 16);
+            });
+            return {png: canvas.toDataURL('image/png').split(',')[1], optionCount: rows.length};
             """;
     private static final String BASE_URL = "https://members.teeone.golf/prat/reservas/inscripcion/";
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
@@ -145,6 +156,7 @@ public class TeeOneAutomation {
     private final Set<String> capturedTeeTimeScreenshots = new HashSet<>();
     private record TeeTimeEvidence(String course, String date, int players, String phase, String capturedAt, String html) {}
     private final List<TeeTimeEvidence> pendingTeeTimeEvidence = new ArrayList<>();
+    private final List<Map<String, Object>> savedTeeTimeImages = new ArrayList<>();
     private final Map<String, String> observedSocioNames = new LinkedHashMap<>();
     private boolean reservationSubmitted;
     private boolean bookingUnavailable;
@@ -196,6 +208,7 @@ public class TeeOneAutomation {
         availabilitySnapshots.clear();
         capturedTeeTimeScreenshots.clear();
         pendingTeeTimeEvidence.clear();
+        savedTeeTimeImages.clear();
         observedSocioNames.clear();
         reservationSubmitted = false;
         bookingUnavailable = false;
@@ -574,38 +587,39 @@ public class TeeOneAutomation {
                 log.warn("Deferred tee-time evidence could not be saved for {}; original outcome retained", evidence.course());
             }
         }
+        if (!savedTeeTimeImages.isEmpty()) {
+            try {
+                String run = System.getenv("GITHUB_RUN_ID");
+                String attempt = System.getenv("GITHUB_RUN_ATTEMPT");
+                Map<String, Object> manifest = new LinkedHashMap<>();
+                manifest.put("schemaVersion", 1);
+                manifest.put("rendering", "sanitized-dropdown-v1");
+                manifest.put("executionId", run == null ? null : run + "-" + (attempt == null ? "1" : attempt));
+                manifest.put("images", savedTeeTimeImages);
+                Files.writeString(teeTimeCaptureDirectory.resolve("tee-time-images.json"),
+                        GsonFactory.getDefaultInstance().toPrettyString(manifest));
+            } catch (IOException exception) {
+                log.warn("Could not save tee-time image manifest; original outcome retained");
+            }
+        }
     }
 
     private void saveTeeTimeScreenshots(TeeTimeEvidence evidence) {
         String stage = "delayed-read-only".equals(evidence.phase()) ? "delayed" : "initial";
         String key = evidence.course() + "|" + stage;
         if (driver == null || capturedTeeTimeScreenshots.contains(key)) return;
-        WebElement panel = null;
-        List<byte[]> screenshots = new ArrayList<>();
+        byte[] screenshot;
+        int optionCount;
         try {
             Object rendered = ((JavascriptExecutor) driver).executeScript(RENDER_TEE_TIME_SCREENSHOT, evidence.html(),
                     Map.of("course", String.valueOf(evidence.course()), "date", evidence.date(), "players", evidence.players(), "capturedAt", evidence.capturedAt()));
-            if (!(rendered instanceof Map<?, ?> state) || !(state.get("panel") instanceof WebElement element)) return;
-            panel = element;
-            int pages = state.get("pages") instanceof Number count
-                    ? Math.max(1, Math.min(count.intValue(), 5)) : 1;
-            for (int page = 0; page < pages; page++) {
-                ((JavascriptExecutor) driver).executeScript("const dropdown = arguments[0].shadowRoot.querySelector('select'); dropdown.scrollTop = arguments[1] * dropdown.clientHeight;", panel, page);
-                byte[] png = panel.getScreenshotAs(OutputType.BYTES);
-                if (png == null || png.length == 0) return;
-                screenshots.add(png);
-            }
+            if (!(rendered instanceof Map<?, ?> state) || !(state.get("png") instanceof String png)
+                    || !(state.get("optionCount") instanceof Number count) || png.isEmpty()) return;
+            screenshot = Base64.getDecoder().decode(png);
+            optionCount = count.intValue();
         } catch (RuntimeException exception) {
             log.warn("Deferred tee-time screenshot unavailable for {}; original outcome retained", evidence.course());
             return;
-        } finally {
-            if (panel != null) {
-                try {
-                    ((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
-                } catch (RuntimeException exception) {
-                    log.warn("Could not remove deferred tee-time screenshot panel for {}", evidence.course());
-                }
-            }
         }
         String course = "unknown";
         if (evidence.course() != null) {
@@ -614,13 +628,13 @@ public class TeeOneAutomation {
         }
         try {
             Files.createDirectories(teeTimeCaptureDirectory);
-                for (int index = 0; index < screenshots.size(); index++) {
-                Path screenshot = Files.createTempFile(teeTimeCaptureDirectory,
-                    evidence.date() + "-" + course + "-p" + evidence.players() + "-" + stage + "-part" + (index + 1) + "-", ".png");
-                Files.write(screenshot, screenshots.get(index));
-                log.info("Tee-time screenshot: phase={} course={} players={} expanded-dropdown={}",
-                    evidence.phase(), evidence.course(), evidence.players(), screenshot);
-                }
+            String file = evidence.date() + "-" + course + "-p" + evidence.players() + "-" + stage + ".png";
+            Files.write(teeTimeCaptureDirectory.resolve(file), screenshot);
+            savedTeeTimeImages.add(Map.of("file", file, "course", String.valueOf(evidence.course()),
+                    "playDate", evidence.date(), "players", evidence.players(), "capturedAt", evidence.capturedAt(),
+                    "stage", stage, "phase", evidence.phase(), "optionCount", optionCount));
+            log.info("Tee-time screenshot: phase={} course={} players={} full-page={}",
+                    evidence.phase(), evidence.course(), evidence.players(), file);
             capturedTeeTimeScreenshots.add(key);
         } catch (IOException exception) {
             log.warn("Could not save deferred tee-time screenshot for {}; original outcome retained", evidence.course());

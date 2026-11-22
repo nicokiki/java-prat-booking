@@ -2,7 +2,9 @@ import argparse
 import copy
 import json
 import re
+import struct
 import subprocess
+import zlib
 from datetime import date, datetime
 from pathlib import Path
 
@@ -20,6 +22,107 @@ FIELDS = {
     "players", "participants", "requested", "outcome", "booked", "blockedAt", "confirmedAt",
     "bookingDurationSeconds", "bookingFormStartedAt", "summary", "availability",
 }
+COURSES = {"TEE 1 ROSA": "rosa", "TEE 1 AMARILLO": "amarillo", "TEE 1 VERDE": "verde"}
+
+
+def clean_screenshots(images, report):
+    if not isinstance(images, list) or len(images) > 6:
+        raise ValueError("Invalid screenshot list")
+    clean = []
+    seen = set()
+    for image in images:
+        if not isinstance(image, dict):
+            raise ValueError("Invalid screenshot metadata")
+        course, stage = image.get("course"), image.get("stage")
+        if course not in COURSES or stage not in {"initial", "recheck"} or (course, stage) in seen:
+            raise ValueError("Invalid or duplicate screenshot course/stage")
+        path = "data/executions/" + report["executionId"] + "/screenshots/" + COURSES[course] + "-" + stage + ".png"
+        if image.get("path") != path or image.get("playDate") != report["playDate"]:
+            raise ValueError("Screenshot belongs to another execution or play date")
+        timestamp = datetime.fromisoformat(image["capturedAt"])
+        if timestamp.utcoffset() is None:
+            raise ValueError("Screenshot capture time must include an offset")
+        if type(image.get("players")) is not int or image["players"] not in {2, 3, 4}:
+            raise ValueError("Invalid screenshot player count")
+        if report.get("players") is not None and image["players"] != report["players"]:
+            raise ValueError("Screenshot player count does not match execution")
+        if type(image.get("optionCount")) is not int or not 0 <= image["optionCount"] <= 500:
+            raise ValueError("Invalid screenshot option count")
+        clean.append({key: image[key] for key in
+                      ("path", "course", "stage", "playDate", "capturedAt", "players", "optionCount")})
+        seen.add((course, stage))
+    return clean
+
+
+def public_png(path, option_count):
+    if path.is_symlink() or path.stat().st_size > 20 * 1024 * 1024:
+        raise ValueError("Unsafe or oversized PNG")
+    data = path.read_bytes()
+    signature = b"\x89PNG\r\n\x1a\n"
+    if not data.startswith(signature):
+        raise ValueError("Invalid PNG signature")
+    offset, chunks, types = 8, [], []
+    while offset < len(data):
+        if offset + 12 > len(data):
+            raise ValueError("Truncated PNG")
+        size = struct.unpack(">I", data[offset:offset + 4])[0]
+        end = offset + size + 12
+        if end > len(data):
+            raise ValueError("Truncated PNG chunk")
+        kind = data[offset + 4:offset + 8]
+        payload = data[offset + 8:end - 4]
+        if zlib.crc32(kind + payload) != struct.unpack(">I", data[end - 4:end])[0]:
+            raise ValueError("PNG checksum mismatch")
+        if not types:
+            if kind != b"IHDR" or size != 13:
+                raise ValueError("Invalid PNG header")
+            width, height, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
+            if (width, height) != (840, max(140, 96 + option_count * 24) * 2) or depth != 8 or color not in {2, 6} or any((compression, filtering, interlace)):
+                raise ValueError("PNG does not match the full-page rendering")
+        if kind in {b"IHDR", b"IDAT", b"IEND"}:
+            chunks.append(data[offset:end])
+        elif not kind[0] & 32:
+            raise ValueError("Unsupported critical PNG chunk")
+        types.append(kind)
+        offset = end
+        if kind == b"IEND":
+            if size or offset != len(data):
+                raise ValueError("Invalid PNG end")
+            break
+    if not types or types.count(b"IHDR") != 1 or b"IDAT" not in types or types[-1] != b"IEND":
+        raise ValueError("Incomplete PNG")
+    return signature + b"".join(chunks)
+
+
+def load_screenshots(directory, report):
+    manifest_path = directory / "tee-time-images.json"
+    if not manifest_path.exists():
+        return [], {}
+    if directory.is_symlink() or manifest_path.is_symlink() or manifest_path.stat().st_size > 65536:
+        raise ValueError("Unsafe screenshot manifest")
+    manifest = json.loads(manifest_path.read_text())
+    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1 or manifest.get("rendering") != "sanitized-dropdown-v1" or manifest.get("executionId") != report["executionId"]:
+        raise ValueError("Screenshot manifest provenance does not match execution")
+    if not isinstance(manifest.get("images"), list) or len(manifest["images"]) > 6:
+        raise ValueError("Invalid screenshot manifest")
+    images, files = [], {}
+    for entry in manifest["images"]:
+        if not isinstance(entry, dict):
+            raise ValueError("Invalid screenshot manifest entry")
+        if entry.get("course") not in COURSES or entry.get("phase") not in {"initial-read", "initial-empty", "delayed-read-only"}:
+            continue
+        stage = {"initial": "initial", "delayed": "recheck"}.get(entry.get("stage"))
+        if stage is None or (entry["phase"] == "delayed-read-only") != (stage == "recheck"):
+            raise ValueError("Invalid screenshot stage")
+        expected = report["playDate"].replace("-", "") + "-" + COURSES[entry["course"]] + "-p" + str(entry.get("players")) + "-" + entry["stage"] + ".png"
+        if entry.get("file") != expected or entry.get("playDate") != report["playDate"].replace("-", ""):
+            raise ValueError("Unsafe screenshot file or mismatched play date")
+        image = {key: entry.get(key) for key in ("course", "capturedAt", "players", "optionCount")}
+        image.update(stage=stage, playDate=report["playDate"], path="data/executions/" + report["executionId"] + "/screenshots/" + COURSES[entry["course"]] + "-" + stage + ".png")
+        images.append(image)
+        clean_screenshots(images, report)
+        files[image["path"]] = public_png(directory / expected, image["optionCount"])
+    return images, files
 
 
 def clean_report(report):
@@ -75,6 +178,8 @@ def clean_report(report):
                 raise ValueError("Invalid enabled state")
             snapshot["options"].append({key: offered.get(key) for key in ("time", "places", "enabled")})
         clean["availability"].append(snapshot)
+    if report.get("screenshots"):
+        clean["screenshots"] = clean_screenshots(report["screenshots"], clean)
     if clean["outcome"] == "Informational":
         if clean["players"] != 2 or clean["participants"] or any(clean[key] is not None for key in
                 ("requested", "booked", "bookingFormStartedAt", "blockedAt", "confirmedAt", "bookingDurationSeconds")):
@@ -94,7 +199,10 @@ def merge_report(path, report):
     if existing.get("schemaVersion") != 1 or not isinstance(existing.get("executions"), list):
         raise ValueError("Invalid dashboard archive")
     reports = {entry["executionId"]: clean_report(entry) for entry in existing["executions"]}
-    reports[report["executionId"]] = clean_report(report)
+    incoming = clean_report(report)
+    if not incoming.get("screenshots") and reports.get(report["executionId"], {}).get("screenshots"):
+        incoming["screenshots"] = reports[report["executionId"]]["screenshots"]
+    reports[report["executionId"]] = incoming
     return {"schemaVersion": 1, "executions": sorted(reports.values(), key=lambda entry:
             (entry["executionDate"], entry.get("startedAt") or "", entry["executionId"]))}
 
@@ -103,9 +211,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("report", type=Path)
     parser.add_argument("repository", type=Path)
+    parser.add_argument("--diagnostics", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args()
     report = clean_report(json.loads(arguments.report.read_text()))
+    files = {}
+    if arguments.diagnostics:
+        try:
+            images, files = load_screenshots(arguments.diagnostics, report)
+            if images:
+                report["screenshots"] = images
+        except (OSError, ValueError, KeyError, TypeError):
+            print("Warning: screenshot validation failed; publishing the booking result without new images")
     repository = arguments.repository.resolve()
     destination = repository / "data" / "executions.json"
     if arguments.dry_run:
@@ -118,7 +235,11 @@ def main():
         temporary = destination.with_suffix(".tmp")
         temporary.write_text(json.dumps(archive, ensure_ascii=True, indent=2) + "\n")
         temporary.replace(destination)
-        subprocess.run(["git", "add", "--", "data/executions.json"], cwd=repository, check=True)
+        for relative, png in files.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(png)
+        subprocess.run(["git", "add", "--", "data/executions.json", *files], cwd=repository, check=True)
         if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repository).returncode == 0:
             print("Execution already published")
             return

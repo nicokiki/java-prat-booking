@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import shutil
 from pathlib import Path
 
 
@@ -34,13 +35,19 @@ def main():
         parser.error("Explicit --confirm-delete is required")
     archive = json.loads(args.archive.read_text(encoding="utf-8"))
     updated = delete_execution(archive, args.execution_id)
+    image_root = args.archive.parent / "executions"
+    images = image_root / args.execution_id
+    if image_root.is_symlink() or images.is_symlink():
+        raise ValueError("Unsafe execution image directory; nothing deleted")
     if args.dry_run:
         print("Validated deletion of " + args.execution_id + "; no data changed")
         return
+    if images.exists():
+        shutil.rmtree(images)
     temporary = args.archive.with_suffix(".tmp")
     temporary.write_text(json.dumps(updated, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     temporary.replace(args.archive)
-    print("Removed execution " + args.execution_id + " from dashboard archive only")
+    print("Removed execution " + args.execution_id + " and its images from the dashboard")
 
 
 if __name__ == "__main__":

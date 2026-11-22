@@ -211,22 +211,35 @@ not when the file was written. The sanitized `dropdownHtml` remains in the norma
 log; the verbatim capture additionally retains original option values,
 attributes and any member labels. It is not full-page source or an API body.
 
-One initial PNG set per observed course is saved under `logs/availability/`, with
+One initial full-page PNG per observed course is saved under `logs/availability/`, with
 the play date, course and player count in its filename. There can also be one
-delayed-recheck PNG set per course. Readiness and filter failures are queued too.
-After the flow, the saved HTML is rendered into an isolated, temporary panel:
-only option labels and selected/disabled states are copied into new native
-controls; original event handlers and arbitrary attributes are not executed.
-The panel shows 20 rows and scrolls through up to 100 options in at most five
-numbered parts (the last part can overlap), then is removed. PNGs represent
+delayed-recheck PNG per course. Readiness and filter failures are queued too.
+After the flow, an off-screen canvas renders every saved option into one tall
+PNG, without the viewport clipping native-select screenshots can cause.
+Only time/capacity labels and selected/disabled states are drawn; member-name
+suffixes are removed and other non-time labels are redacted. Original event
+handlers and arbitrary attributes are not executed. More than 500 options
+skip PNG creation rather than silently truncating the image. PNGs represent
 the saved HTML snapshot, not a live screenshot taken during selection. Live
 reservation controls are never expanded or changed, and courses are not revisited.
 Diagnostic capture failures do not replace the booking outcome. Only the small
 DOM/metadata snapshot read remains in the normal path; browser rendering and
 file work happen afterward, with no added availability requests or reservation retries.
 
-Raw HTML and PNGs may contain private member labels and are **not** sent to the
-public dashboard, report JSON, CSV or email. To retain them from Actions, explicitly
+Raw HTML may contain private member labels and is **never** sent to the dashboard,
+public report JSON, CSV or email. A separate `tee-time-images.json` manifest identifies
+the sanitized PNGs by execution, course, stage and original capture time.
+The publisher copies only these validated PNGs into
+`data/executions/EXECUTION_ID/screenshots/` in the dashboard repository and adds
+allowlisted `screenshots` references to that execution. Only settled Initial/Recheck
+captures are published; filter/readiness-failure PNGs remain in the diagnostic bundle.
+The workflow's live-run marker also excludes build-time fixture images. PNG ancillary metadata is
+stripped before publication. Missing or invalid images do not block the saved
+booking result. Older executions without PNGs remain unchanged.
+The dashboard has per-execution Initial/Recheck thumbnails, full-page fit,
+minus/plus zoom and a fit reset. Deleting an execution also removes its PNG directory.
+
+To retain the raw diagnostic bundle from Actions, explicitly
 enable workflow input `upload_availability_diagnostics` (default **false**).
 The `availability-diagnostics-RUN_ID-ATTEMPT` artifact lasts seven days and may
 be downloaded by other authenticated users because this repository is public.
@@ -245,8 +258,8 @@ Rechecks never choose a tee time, click BLOQUEAR, add players or submit RESERVAR
 They do not run after a time was selected, blocked or submitted, and do not add
 waits to the normal booking/fallback path. Initial public snapshots and outcomes
 are retained, without adding duplicate course entries to dashboard calculations.
-The extra diagnostic observations are in the Actions log, not the public archive
-or CSV. Failed/Informational runs can consequently finish later, including any
+The extra diagnostic observations are in the Actions log and sanitized Recheck
+PNGs, not duplicate calculation snapshots or CSV rows. Failed/Informational runs can consequently finish later, including any
 subsequent failure notification; successful bookings do not wait for rechecks.
 
 ### Response-aware availability checks

@@ -169,6 +169,12 @@ public class TeeOneAutomationTest {
         assertFalse(source.contains(".click("));
         java.nio.file.Files.writeString(java.nio.file.Path.of("target", "availability-observer-fixture.js"), source);
         java.nio.file.Files.writeString(java.nio.file.Path.of("target", "availability-read-fixture.js"), availabilityReadScript());
+        Field renderer = TeeOneAutomation.class.getDeclaredField("RENDER_TEE_TIME_SCREENSHOT");
+        renderer.setAccessible(true);
+        String rendering = (String) renderer.get(null);
+        assertFalse(rendering.contains("document.body"));
+        assertFalse(rendering.contains("fetch("));
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target", "tee-time-render-fixture.js"), rendering);
     }
 
     private String availabilityReadScript() throws Exception {
@@ -252,11 +258,10 @@ public class TeeOneAutomationTest {
         String html = "<select id=\"HoraJuego\"><option value=\"08:25\">08:25 (4)</option></select>";
         when(source.getDomProperty("outerHTML")).thenReturn(html);
         WebElement panel = mock(WebElement.class);
-        doReturn(java.util.Map.of("panel", panel, "pages", 1)).when((JavascriptExecutor) driver)
-                .executeScript(contains("createElement('template')"), eq(html), anyMap());
         var bytes = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
-        when(panel.getScreenshotAs(OutputType.BYTES)).thenReturn(bytes.toByteArray());
+        doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 1))
+            .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "deferred-tee-time-");
         Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
         captureDirectory.setAccessible(true);
@@ -275,10 +280,10 @@ public class TeeOneAutomationTest {
             automation.saveTeeTimeEvidence();
             assertTrue(messages.list.get(0).getFormattedMessage().endsWith("html=" + html));
             assertTrue(messages.list.get(0).getFormattedMessage().contains("capturedAt="));
-            try (var files = java.nio.file.Files.list(directory)) { assertEquals(1, files.count()); }
-            verify(panel).getScreenshotAs(OutputType.BYTES);
+            try (var files = java.nio.file.Files.list(directory)) { assertEquals(2, files.count()); }
+            verify((JavascriptExecutor) driver).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
             verify(source, never()).getScreenshotAs(any());
-            verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+            verify((JavascriptExecutor) driver, never()).executeScript(contains("arguments[0].remove()"), any());
             automation.saveTeeTimeEvidence();
             assertEquals(1, messages.list.size());
         } finally {
@@ -294,11 +299,10 @@ public class TeeOneAutomationTest {
         when(select.getDomProperty("outerHTML")).thenReturn(html);
         when(driver.getCurrentUrl()).thenReturn("https://members.teeone.golf/prat/reservas/inscripcion/20261123");
         WebElement panel = mock(WebElement.class);
-        doReturn(java.util.Map.of("panel", panel, "pages", 1)).when((JavascriptExecutor) driver)
-            .executeScript(contains("createElement('template')"), eq(html), anyMap());
         var bytes = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
-        when(panel.getScreenshotAs(OutputType.BYTES)).thenReturn(bytes.toByteArray());
+        doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 1))
+            .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-capture-");
         Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
         captureDirectory.setAccessible(true);
@@ -316,14 +320,13 @@ public class TeeOneAutomationTest {
             assertTrue(messages.list.get(0).getFormattedMessage().contains("date=20261123"));
             assertFalse(logger.isAdditive());
             try (var files = java.nio.file.Files.list(directory)) {
-                var png = files.findFirst().orElseThrow();
+                var png = files.filter(file -> file.toString().endsWith(".png")).findFirst().orElseThrow();
                 assertArrayEquals(bytes.toByteArray(), java.nio.file.Files.readAllBytes(png));
                 assertNotNull(javax.imageio.ImageIO.read(png.toFile()));
             }
-            verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
             invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-empty");
             automation.saveTeeTimeEvidence();
-            verify(panel, times(1)).getScreenshotAs(OutputType.BYTES);
+            verify((JavascriptExecutor) driver, times(1)).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
             Field course = TeeOneAutomation.class.getDeclaredField("selectedRecorrido");
             course.setAccessible(true);
             for (String name : List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")) {
@@ -334,7 +337,7 @@ public class TeeOneAutomationTest {
             try (var files = java.nio.file.Files.list(directory)) {
                 List<String> names = files.map(file -> file.getFileName().toString()).toList();
                 for (String name : List.of("rosa", "amarillo", "verde")) {
-                    assertTrue(names.stream().anyMatch(file -> file.startsWith("20261123-" + name + "-p2-initial-")));
+                    assertTrue(names.contains("20261123-" + name + "-p2-initial.png"));
                 }
             }
             verify(select, never()).click();
@@ -350,16 +353,15 @@ public class TeeOneAutomationTest {
     }
 
     @Test
-    public void longDropdownScreenshotsCaptureAllBoundedParts() throws Exception {
+    public void longDropdownScreenshotsCaptureOneCompletePage() throws Exception {
         WebElement select = dropdown(option("08:25 (4)", "08:25"));
         String html = "<select>" + "<option>08:25 (4)</option>".repeat(52) + "</select>";
         when(select.getDomProperty("outerHTML")).thenReturn(html);
         WebElement panel = mock(WebElement.class);
-        doReturn(java.util.Map.of("panel", panel, "pages", 3)).when((JavascriptExecutor) driver)
-            .executeScript(contains("createElement('template')"), eq(html), anyMap());
         var bytes = new java.io.ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
-        when(panel.getScreenshotAs(OutputType.BYTES)).thenReturn(bytes.toByteArray());
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(840, 2688, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
+        doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 52))
+            .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-parts-");
         Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
         captureDirectory.setAccessible(true);
@@ -368,13 +370,16 @@ public class TeeOneAutomationTest {
         verify(panel, never()).getScreenshotAs(any());
         automation.saveTeeTimeEvidence();
         try (var files = java.nio.file.Files.list(directory)) {
-            assertEquals(3, files.count());
+            var png = files.filter(file -> file.toString().endsWith(".png")).toList();
+            assertEquals(1, png.size());
+            assertEquals(2688, javax.imageio.ImageIO.read(png.get(0).toFile()).getHeight());
         }
-        for (int index = 0; index < 3; index++) {
-            verify((JavascriptExecutor) driver).executeScript(contains("clientHeight"), eq(panel), eq(index));
-        }
-        verify(panel, times(3)).getScreenshotAs(OutputType.BYTES);
-        verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+        String manifest = java.nio.file.Files.readString(directory.resolve("tee-time-images.json"));
+        assertTrue(manifest.contains("sanitized-dropdown-v1"));
+        assertTrue(manifest.contains("\"optionCount\": 52"));
+        assertFalse(manifest.contains("<select>"));
+        verify((JavascriptExecutor) driver).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
+        verify((JavascriptExecutor) driver, never()).executeScript(contains("clientHeight"), any(), any());
         verify(select, never()).getScreenshotAs(any());
         verify(select, never()).click();
     }
@@ -384,13 +389,11 @@ public class TeeOneAutomationTest {
         WebElement select = dropdown(option("", "-1"));
         String html = "<select id=\"HoraJuego\"><option value=\"-1\"></option></select>";
         when(select.getDomProperty("outerHTML")).thenReturn(html);
-        WebElement panel = mock(WebElement.class);
-        doReturn(java.util.Map.of("panel", panel, "pages", 1)).when((JavascriptExecutor) driver)
+        doThrow(new WebDriverException("Fixture screenshot failure")).when((JavascriptExecutor) driver)
             .executeScript(contains("createElement('template')"), eq(html), anyMap());
-        when(panel.getScreenshotAs(OutputType.BYTES)).thenThrow(new WebDriverException("Fixture screenshot failure"));
         invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "readiness-failure");
         automation.saveTeeTimeEvidence();
-        verify((JavascriptExecutor) driver).executeScript("arguments[0].remove();", panel);
+        verify((JavascriptExecutor) driver, never()).executeScript(contains("arguments[0].remove()"), any());
         verify(select, never()).getScreenshotAs(any());
         assertNull(automation.getSelectedHoraDeJuego());
         assertNull(automation.getReservationBlockedAt());

@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const install = readFileSync(resolve(__dirname, '../../../target/availability-observer-fixture.js'), 'utf8');
 const read = readFileSync(resolve(__dirname, '../../../target/availability-read-fixture.js'), 'utf8');
+const render = readFileSync(resolve(__dirname, '../../../target/tee-time-render-fixture.js'), 'utf8');
 
 function observer() {
   const handlers = {};
@@ -94,4 +95,46 @@ test('installation is idempotent and does not require or issue network requests'
   assert.equal(observed.install(), true);
   assert.equal(observed.handlers['ajaxSend.pratAvailability'], send);
   assert.equal(vm.runInNewContext('(function(){' + install + '})()', {window: {}}), false);
+});
+
+function renderedOptions(options) {
+  const text = [];
+  const canvas = {getContext: () => ({scale(){},fillRect(){},strokeRect(){},fillText: value => text.push(value)}),toDataURL: () => 'data:image/png;base64,fixture'};
+  const context = {
+    inputs:['<select>saved snapshot</select>',{course:'TEE 1 ROSA',date:'20261124',players:2,capturedAt:'2026-11-22T20:00:06+01:00'}],
+    document:{createElement: name => {
+      if (name === 'template') return {content:{querySelector: () => ({options,disabled:false})}};
+      assert.equal(name,'canvas');
+      return canvas;
+    }}
+  };
+  const result = vm.runInNewContext('(function(){'+render+'}).apply(null,inputs)',context);
+  return {result,text,canvas};
+}
+
+test('the production PNG renderer keeps all rows, including more than 100 options', () => {
+  const options = Array.from({length:150},() => ({label:'08:00 (4)',selected:false,disabled:false}));
+  options.push({label:'17:30 (2)',selected:false,disabled:true});
+  const rendered = renderedOptions(options);
+  assert.equal(rendered.result.optionCount,151);
+  assert.equal(rendered.canvas.height,(96+151*24)*2);
+  assert.equal(rendered.text.length,153);
+  assert.equal(rendered.text.at(-1),'17:30 (2)');
+});
+
+test('public PNG rows keep time/capacity but remove member labels and unknown text', () => {
+  const rendered = renderedOptions([
+    {label:'08:00 (4) private-member private-licence',selected:true,disabled:false},
+    {label:'private-member',selected:false,disabled:false},
+    {label:'',selected:false,disabled:false}
+  ]);
+  assert.deepEqual(rendered.text.slice(2),['08:00 (4)','[redacted]','']);
+  assert.equal(JSON.stringify(rendered.text).includes('private'),false);
+  assert.equal(rendered.result.optionCount,3);
+});
+
+test('oversized dropdowns fail safely rather than publish a partial PNG', () => {
+  const rendered = renderedOptions(Array.from({length:501},() => ({label:'08:00'})));
+  assert.equal(rendered.result,null);
+  assert.equal(rendered.text.length,0);
 });

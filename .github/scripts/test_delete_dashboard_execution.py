@@ -59,6 +59,38 @@ class DeleteExecutionTest(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()), {"schemaVersion": 1, "executions": []})
             self.assertFalse(path.with_suffix(".tmp").exists())
 
+    def test_image_cleanup_is_exact_and_dry_run_keeps_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "executions.json"
+            path.write_text(json.dumps(self.archive))
+            for identifier in ["fixture-1", "fixture-2"]:
+                images = root / "executions" / identifier / "screenshots"
+                images.mkdir(parents=True)
+                (images / "rosa-initial.png").write_bytes(b"fixture")
+            args = ["delete", str(path), "--execution-id", "fixture-1"]
+            with patch.object(sys, "argv", args + ["--dry-run"]):
+                delete_dashboard.main()
+            self.assertTrue((root / "executions" / "fixture-1").exists())
+            with patch.object(sys, "argv", args + ["--confirm-delete"]):
+                delete_dashboard.main()
+            self.assertFalse((root / "executions" / "fixture-1").exists())
+            self.assertTrue((root / "executions" / "fixture-2" / "screenshots" / "rosa-initial.png").exists())
+
+    def test_symlink_image_directory_is_rejected_without_archive_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "executions.json"
+            path.write_text(json.dumps(self.archive))
+            original = path.read_bytes()
+            outside = root / "outside"
+            outside.mkdir()
+            (root / "executions").symlink_to(outside, target_is_directory=True)
+            with patch.object(sys, "argv", ["delete", str(path), "--execution-id", "fixture-1", "--confirm-delete"]):
+                with self.assertRaises(ValueError):
+                    delete_dashboard.main()
+            self.assertEqual(original, path.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()

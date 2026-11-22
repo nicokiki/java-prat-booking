@@ -43,6 +43,6 @@ jobs:
           python3 .github/scripts/delete_dashboard_execution.py .dashboard/data/executions.json --execution-id "$EXECUTION_ID" --confirm-delete
           git -C .dashboard config user.name "github-actions[bot]"
           git -C .dashboard config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C .dashboard add -- data/executions.json
+          git -C .dashboard add --all -- data
           git -C .dashboard commit -m "Remove dashboard execution $EXECUTION_ID"
           git -C .dashboard push origin HEAD:main
