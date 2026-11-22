@@ -84,7 +84,7 @@ def public_png(path, option_count):
             if kind != b"IHDR" or size != 13:
                 raise ValueError("Invalid PNG header")
             width, height, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
-            if (width, height) != (840, max(140, 96 + option_count * 24) * 2) or depth != 8 or color not in {2, 6} or any((compression, filtering, interlace)):
+            if width != 840 or height not in {max(140, 96 + option_count * 24) * 2, (300 + option_count * 24) * 2} or depth != 8 or color not in {2, 6} or any((compression, filtering, interlace)):
                 raise ValueError("PNG does not match the full-page rendering")
         if kind in {b"IHDR", b"IDAT", b"IEND"}:
             chunks.append(data[offset:end])

@@ -216,9 +216,12 @@ One initial full-page PNG per observed course/hole variant is saved under `logs/
 the play date, course and player count in its filename. Nine-hole filenames add
 `-h9`; eighteen-hole names stay unchanged. There can also be one delayed-recheck
 PNG per variant. Readiness and filter failures are queued too.
-After the flow, an off-screen canvas renders every saved option into one tall
-PNG, without the viewport clipping native-select screenshots can cause.
-Only time/capacity labels and selected/disabled states are drawn; member-name
+After the flow, an off-screen canvas renders the selected play date, Recorrido,
+Numero de hoyos and Jugadores controls above every saved tee-time option in one
+tall PNG, without the viewport clipping native-select screenshots can cause.
+The controls are sanitized reconstructions from the capture's selected filter
+metadata, not an unredacted browser screenshot. Existing historical PNGs remain unchanged.
+Only allowlisted filter values, time/capacity labels and selected/disabled states are drawn; member-name
 suffixes are removed and other non-time labels are redacted. Original event
 handlers and arbitrary attributes are not executed. More than 500 options
 skip PNG creation rather than silently truncating the image. PNGs represent

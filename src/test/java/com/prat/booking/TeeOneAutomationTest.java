@@ -363,7 +363,7 @@ public class TeeOneAutomationTest {
         course.set(automation, "TEE 1 ROSA");
         WebElement panel = mock(WebElement.class);
         var bytes = new java.io.ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(840, 2688, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(840, 3096, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
         doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 52))
             .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-parts-");
@@ -376,7 +376,7 @@ public class TeeOneAutomationTest {
         try (var files = java.nio.file.Files.list(directory)) {
             var png = files.filter(file -> file.toString().endsWith(".png")).toList();
             assertEquals(1, png.size());
-            assertEquals(2688, javax.imageio.ImageIO.read(png.get(0).toFile()).getHeight());
+            assertEquals(3096, javax.imageio.ImageIO.read(png.get(0).toFile()).getHeight());
         }
         String manifest = java.nio.file.Files.readString(directory.resolve("tee-time-images.json"));
         assertTrue(manifest.contains("sanitized-dropdown-v1"));

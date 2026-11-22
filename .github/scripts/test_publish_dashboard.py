@@ -94,11 +94,11 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             publisher.clean_report(report)
 
-    def screenshot_fixture(self, directory):
+    def screenshot_fixture(self, directory, height=288):
         def chunk(kind, payload):
             return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
-        header = struct.pack(">IIBBBBB", 840, 288, 8, 2, 0, 0, 0)
-        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"tEXt", b"private\0NEVER-PUBLISH") + chunk(b"IDAT", zlib.compress(b"\0" * ((840 * 3 + 1) * 288))) + chunk(b"IEND", b"")
+        header = struct.pack(">IIBBBBB", 840, height, 8, 2, 0, 0, 0)
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"tEXt", b"private\0NEVER-PUBLISH") + chunk(b"IDAT", zlib.compress(b"\0" * ((840 * 3 + 1) * height))) + chunk(b"IEND", b"")
         entry = {"course": "TEE 1 ROSA", "stage": "initial", "playDate": "20261115", "players": 2,
                  "capturedAt": "2026-11-14T20:00:06+01:00", "optionCount": 2,
                  "phase": "initial-read", "file": "20261115-rosa-p2-initial.png"}
@@ -133,6 +133,17 @@ class PublisherTest(unittest.TestCase):
                     publisher.load_screenshots(directory, self.report())
             (directory / "tee-time-images.json").write_text(json.dumps(manifest))
             (directory / manifest["images"][0]["file"]).write_bytes(b"not a PNG")
+            with self.assertRaises(ValueError):
+                publisher.load_screenshots(directory, self.report())
+
+    def test_filter_context_png_height_is_accepted_but_arbitrary_height_is_not(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.screenshot_fixture(directory, height=696)
+            images, files = publisher.load_screenshots(directory, self.report())
+            self.assertEqual(1, len(images))
+            self.assertNotIn(b"NEVER-PUBLISH", next(iter(files.values())))
+            self.screenshot_fixture(directory, height=698)
             with self.assertRaises(ValueError):
                 publisher.load_screenshots(directory, self.report())
 

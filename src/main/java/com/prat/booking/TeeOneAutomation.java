@@ -63,7 +63,7 @@ public class TeeOneAutomation {
                     disabled: source.disabled || original.disabled, selected: original.selected});
             }
             const width = 420;
-            const height = Math.max(140, 96 + rows.length * 24);
+            const height = 300 + rows.length * 24;
             const canvas = document.createElement('canvas');
             canvas.width = width * 2;
             canvas.height = height * 2;
@@ -71,14 +71,35 @@ public class TeeOneAutomation {
             context.scale(2, 2);
             context.fillStyle = '#ffffff'; context.fillRect(0, 0, width, height);
             context.fillStyle = '#222222'; context.font = '14px sans-serif';
-            context.fillText(metadata.course + ' | ' + metadata.date + ' | ' + metadata.players + ' players | ' + metadata.holes + ' holes', 16, 24);
+            context.fillText('TeeOne / Availability', 16, 24);
             context.fillStyle = '#6e6e6e'; context.font = '12px sans-serif';
             context.fillText('Captured ' + metadata.capturedAt, 16, 44);
-            context.fillStyle = '#fafafa'; context.fillRect(16, 58, width - 32, height - 74);
-            context.strokeStyle = '#999999'; context.strokeRect(16.5, 58.5, width - 33, height - 75);
+            const course = String(metadata.course).match(/^TEE ?1 (ROSA|AMARILLO|VERDE)$/i);
+            const date = String(metadata.date).match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+            function field(label, value, left, top, fieldWidth, dropdown = true) {
+                context.fillStyle = '#555555'; context.font = '12px sans-serif';
+                context.fillText(label, left, top);
+                context.fillStyle = '#fafafa'; context.fillRect(left, top + 8, fieldWidth, 32);
+                context.strokeStyle = '#999999'; context.strokeRect(left + 0.5, top + 8.5, fieldWidth - 1, 31);
+                context.fillStyle = '#222222'; context.font = '16px sans-serif';
+                context.fillText(value, left + 8, top + 30);
+                if (dropdown) {
+                    context.beginPath(); context.moveTo(left + fieldWidth - 22, top + 21);
+                    context.lineTo(left + fieldWidth - 17, top + 26); context.lineTo(left + fieldWidth - 12, top + 21);
+                    context.stroke();
+                }
+            }
+            field('Fecha de juego', date ? date[3] + '/' + date[2] + '/' + date[1] : '[not recorded]', 16, 70, 388, false);
+            field('Recorrido', course ? 'TEE 1 ' + course[1].toUpperCase() : '[not recorded]', 16, 130, 388);
+            field('Número de hoyos', [9, 18].includes(metadata.holes) ? String(metadata.holes) : '[not recorded]', 16, 190, 180);
+            field('Jugadores', [1, 2, 3, 4].includes(metadata.players) ? String(metadata.players) : '[not recorded]', 220, 190, 184);
+            context.fillStyle = '#555555'; context.font = '12px sans-serif';
+            context.fillText('Hora de juego', 16, 254);
+            context.fillStyle = '#fafafa'; context.fillRect(16, 264, width - 32, height - 280);
+            context.strokeStyle = '#999999'; context.strokeRect(16.5, 264.5, width - 33, height - 281);
             context.font = '16px sans-serif';
             rows.forEach((row, index) => {
-                const top = 62 + index * 24;
+                const top = 268 + index * 24;
                 if (row.selected) { context.fillStyle = '#e5f0ff'; context.fillRect(18, top - 2, width - 36, 24); }
                 context.fillStyle = row.disabled ? '#777777' : '#222222';
                 context.fillText(row.label, 24, top + 16);

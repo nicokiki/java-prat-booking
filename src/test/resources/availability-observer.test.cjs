@@ -97,11 +97,11 @@ test('installation is idempotent and does not require or issue network requests'
   assert.equal(vm.runInNewContext('(function(){' + install + '})()', {window: {}}), false);
 });
 
-function renderedOptions(options) {
+function renderedOptions(options, metadata = {}) {
   const text = [];
-  const canvas = {getContext: () => ({scale(){},fillRect(){},strokeRect(){},fillText: value => text.push(value)}),toDataURL: () => 'data:image/png;base64,fixture'};
+  const canvas = {getContext: () => ({scale(){},fillRect(){},strokeRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},fillText: value => text.push(value)}),toDataURL: () => 'data:image/png;base64,fixture'};
   const context = {
-    inputs:['<select>saved snapshot</select>',{course:'TEE 1 ROSA',date:'20261124',players:2,holes:18,capturedAt:'2026-11-22T20:00:06+01:00'}],
+    inputs:['<select>saved snapshot</select>',{course:'TEE 1 ROSA',date:'20261124',players:2,holes:18,capturedAt:'2026-11-22T20:00:06+01:00',...metadata}],
     document:{createElement: name => {
       if (name === 'template') return {content:{querySelector: () => ({options,disabled:false})}};
       assert.equal(name,'canvas');
@@ -117,8 +117,8 @@ test('the production PNG renderer keeps all rows, including more than 100 option
   options.push({label:'17:30 (2)',selected:false,disabled:true});
   const rendered = renderedOptions(options);
   assert.equal(rendered.result.optionCount,151);
-  assert.equal(rendered.canvas.height,(96+151*24)*2);
-  assert.equal(rendered.text.length,153);
+  assert.equal(rendered.canvas.height,(300+151*24)*2);
+  assert.equal(rendered.text.length,162);
   assert.equal(rendered.text.at(-1),'17:30 (2)');
 });
 
@@ -128,7 +128,7 @@ test('public PNG rows keep time/capacity but remove member labels and unknown te
     {label:'private-member',selected:false,disabled:false},
     {label:'',selected:false,disabled:false}
   ]);
-  assert.deepEqual(rendered.text.slice(2),['08:00 (4)','[redacted]','']);
+  assert.deepEqual(rendered.text.slice(-3),['08:00 (4)','[redacted]','']);
   assert.equal(JSON.stringify(rendered.text).includes('private'),false);
   assert.equal(rendered.result.optionCount,3);
 });
@@ -137,4 +137,12 @@ test('oversized dropdowns fail safely rather than publish a partial PNG', () => 
   const rendered = renderedOptions(Array.from({length:501},() => ({label:'08:00'})));
   assert.equal(rendered.result,null);
   assert.equal(rendered.text.length,0);
+});
+
+test('PNG context shows selected booking filters and rejects arbitrary filter labels', () => {
+  const rendered = renderedOptions([{label:'09:00 (2)'}],{holes:9});
+  assert.deepEqual(rendered.text.slice(2,11),['Fecha de juego','24/11/2026','Recorrido','TEE 1 ROSA','Número de hoyos','9','Jugadores','2','Hora de juego']);
+  const unsafe = renderedOptions([],{course:'private-member',date:'private-licence',players:'private-member',holes:'private-member'});
+  assert.equal(JSON.stringify(unsafe.text).includes('private'),false);
+  assert.equal(unsafe.text.filter(value=>value==='[not recorded]').length,4);
 });
