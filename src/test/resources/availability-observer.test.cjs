@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 const install = readFileSync(resolve(__dirname, '../../../target/availability-observer-fixture.js'), 'utf8');
 const read = readFileSync(resolve(__dirname, '../../../target/availability-read-fixture.js'), 'utf8');
-const render = readFileSync(resolve(__dirname, '../../../target/tee-time-render-fixture.js'), 'utf8');
+const capture = JSON.parse(readFileSync(resolve(__dirname, '../../../target/tee-time-render-fixture.js'), 'utf8'));
 
 function observer() {
   const handlers = {};
@@ -97,52 +97,43 @@ test('installation is idempotent and does not require or issue network requests'
   assert.equal(vm.runInNewContext('(function(){' + install + '})()', {window: {}}), false);
 });
 
-function renderedOptions(options, metadata = {}) {
-  const text = [];
-  const canvas = {getContext: () => ({scale(){},fillRect(){},strokeRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},fillText: value => text.push(value)}),toDataURL: () => 'data:image/png;base64,fixture'};
-  const context = {
-    inputs:['<select>saved snapshot</select>',{course:'TEE 1 ROSA',date:'20261124',players:2,holes:18,capturedAt:'2026-11-22T20:00:06+01:00',...metadata}],
-    document:{createElement: name => {
-      if (name === 'template') return {content:{querySelector: () => ({options,disabled:false})}};
-      assert.equal(name,'canvas');
-      return canvas;
-    }}
-  };
-  const result = vm.runInNewContext('(function(){'+render+'}).apply(null,inputs)',context);
-  return {result,text,canvas};
+function captureForm(labels, privateInput = false) {
+  function element(attributes = {}) {
+    return {getAttribute:name=>attributes[name] ?? null,setAttribute:(name,value)=>{attributes[name]=String(value);},
+      removeAttribute:name=>{delete attributes[name];},style:{setProperty:(name,value)=>{attributes.style=(attributes.style||'')+name+':'+value+';';}},
+      getClientRects:()=>[{}],dispatchEvent:()=>{throw Error('No events allowed');}};
+  }
+  const options=labels.map((text,index)=>({...element({label:text}),textContent:text,selected:index===0,
+    get label(){return this.getAttribute('label') || this.textContent;}}));
+  const panel=element();
+  const dropdown={...element({size:'1',style:'height:38px'}),options,size:1,scrollTop:12,clientHeight:40,scrollHeight:labels.length*24};
+  dropdown.closest=()=>panel;dropdown.parentElement=panel;
+  panel.querySelector=id=>({selectedOptions:[{textContent:({'#Recorrido':'TEE 1 ROSA','#Hoyos':'18','#Plazas':'2'})[id]}]});
+  panel.querySelectorAll=()=>privateInput?[element()]:[];
+  panel.getBoundingClientRect=()=>({left:5,top:100,width:704,bottom:400+dropdown.size*24});
+  dropdown.getBoundingClientRect=()=>({bottom:350+dropdown.size*24});
+  const context=vm.createContext({window:{},inputs:[dropdown],getComputedStyle:()=>({visibility:'visible'}),scrollX:0,scrollY:0,devicePixelRatio:1});
+  const run=script=>vm.runInContext('(function(){'+script+'}).apply(null,inputs)',context);
+  return {dropdown,panel,prepare:()=>run(capture.prepare),restore:()=>run(capture.restore),context};
 }
 
-test('the production PNG renderer keeps all rows, including more than 100 options', () => {
-  const options = Array.from({length:150},() => ({label:'08:00 (4)',selected:false,disabled:false}));
-  options.push({label:'17:30 (2)',selected:false,disabled:true});
-  const rendered = renderedOptions(options);
-  assert.equal(rendered.result.optionCount,151);
-  assert.equal(rendered.canvas.height,(300+151*24)*2);
-  assert.equal(rendered.text.length,162);
-  assert.equal(rendered.text.at(-1),'17:30 (2)');
+test('real capture expands every native option and restores styles, text, selection and scroll',()=>{
+  const labels=Array.from({length:150},()=> '08:00 (4) private-member');labels.push('17:30 (2)');
+  const form=captureForm(labels);const result=form.prepare();
+  assert.equal(result.optionCount,151);assert.ok(result.clip.height>800);
+  assert.equal(form.dropdown.size,151);assert.equal(form.dropdown.options.at(-1).textContent,'17:30 (2)');
+  assert.equal(form.dropdown.options[0].textContent,'08:00 (4)');assert.equal(form.dropdown.options[0].selected,true);
+  form.restore();
+  assert.equal(form.dropdown.getAttribute('size'),'1');assert.equal(form.dropdown.getAttribute('style'),'height:38px');
+  assert.equal(form.panel.getAttribute('style'),null);assert.equal(form.dropdown.scrollTop,12);
+  assert.deepEqual(form.dropdown.options.map(option=>option.textContent),labels);
+  assert.equal(form.context.window.__pratRealScreenshot,undefined);
 });
 
-test('public PNG rows keep time/capacity but remove member labels and unknown text', () => {
-  const rendered = renderedOptions([
-    {label:'08:00 (4) private-member private-licence',selected:true,disabled:false},
-    {label:'private-member',selected:false,disabled:false},
-    {label:'',selected:false,disabled:false}
-  ]);
-  assert.deepEqual(rendered.text.slice(-3),['08:00 (4)','[redacted]','']);
-  assert.equal(JSON.stringify(rendered.text).includes('private'),false);
-  assert.equal(rendered.result.optionCount,3);
-});
-
-test('oversized dropdowns fail safely rather than publish a partial PNG', () => {
-  const rendered = renderedOptions(Array.from({length:501},() => ({label:'08:00'})));
-  assert.equal(rendered.result,null);
-  assert.equal(rendered.text.length,0);
-});
-
-test('PNG context shows selected booking filters and rejects arbitrary filter labels', () => {
-  const rendered = renderedOptions([{label:'09:00 (2)'}],{holes:9});
-  assert.deepEqual(rendered.text.slice(2,11),['Fecha de juego','24/11/2026','Recorrido','TEE 1 ROSA','Número de hoyos','9','Jugadores','2','Hora de juego']);
-  const unsafe = renderedOptions([],{course:'private-member',date:'private-licence',players:'private-member',holes:'private-member'});
-  assert.equal(JSON.stringify(unsafe.text).includes('private'),false);
-  assert.equal(unsafe.text.filter(value=>value==='[not recorded]').length,4);
+test('real capture redacts non-time labels and refuses private inputs or oversized lists',()=>{
+  const form=captureForm(['private-member','']);form.prepare();
+  assert.equal(form.dropdown.options[0].textContent,'[redacted]');form.restore();
+  for(const unsafe of [captureForm(['08:00'],true),captureForm(Array(501).fill('08:00'))]) {
+    assert.equal(unsafe.prepare(),null);assert.equal(unsafe.context.window.__pratRealScreenshot,undefined);
+  }
 });

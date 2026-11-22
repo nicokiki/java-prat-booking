@@ -49,62 +49,59 @@ public class TeeOneAutomation {
 
     private static final Logger log = LoggerFactory.getLogger(TeeOneAutomation.class);
     private static final Logger teeTimeHtmlLog = LoggerFactory.getLogger("com.prat.booking.TeeTimeHtml");
-    private static final String RENDER_TEE_TIME_SCREENSHOT = """
-            const template = document.createElement('template');
-            template.innerHTML = arguments[0];
-            const source = template.content.querySelector('select');
-            if (!source || source.options.length > 500) return null;
-            const metadata = arguments[1];
-            const rows = [];
-            for (const original of source.options) {
-                const label = String(original.label || original.textContent || '').trim();
+    private static final String PREPARE_REAL_TEE_TIME_SCREENSHOT = """
+            const dropdown = arguments[0];
+            const panel = dropdown.closest('.panel');
+            if (!panel || dropdown.options.length > 500 || window.__pratRealScreenshot) return null;
+            const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
+            if ([...panel.querySelectorAll('input:not([type="hidden"]), textarea')].some(visible)) return null;
+            for (const id of ['Recorrido', 'Hoyos', 'Plazas']) {
+                const filter = panel.querySelector('#' + id);
+                const label = filter?.selectedOptions[0]?.textContent.trim();
+                if (!label || !/^(?:TEE ?1 (?:ROSA|AMARILLO|VERDE)|18|9|[1-4])$/i.test(label)) return null;
+            }
+            const state = {dropdown, size:dropdown.getAttribute('size'), scrollTop:dropdown.scrollTop,
+                options:[...dropdown.options].map(option => ({option, text:option.textContent, label:option.getAttribute('label')})),
+                styles:[]};
+            window.__pratRealScreenshot = state;
+            for (let element = dropdown; element; element = element.parentElement) {
+                state.styles.push({element, style:element.getAttribute('style')});
+                element.style.setProperty('overflow', 'visible', 'important');
+                if (element === panel) break;
+            }
+            for (const option of dropdown.options) {
+                const label = String(option.label || option.textContent || '').trim();
                 const safe = label.match(/^((?:[01]\\d|2[0-3]):[0-5]\\d)(?:\\s*\\((\\d{1,2})\\))?/);
-                rows.push({label: safe ? safe[1] + (safe[2] ? ' (' + safe[2] + ')' : '') : label ? '[redacted]' : '',
-                    disabled: source.disabled || original.disabled, selected: original.selected});
+                option.textContent = safe ? safe[1] + (safe[2] ? ' (' + safe[2] + ')' : '') : label ? '[redacted]' : '';
+                option.removeAttribute('label');
             }
-            const width = 420;
-            const height = 300 + rows.length * 24;
-            const canvas = document.createElement('canvas');
-            canvas.width = width * 2;
-            canvas.height = height * 2;
-            const context = canvas.getContext('2d');
-            context.scale(2, 2);
-            context.fillStyle = '#ffffff'; context.fillRect(0, 0, width, height);
-            context.fillStyle = '#222222'; context.font = '14px sans-serif';
-            context.fillText('TeeOne / Availability', 16, 24);
-            context.fillStyle = '#6e6e6e'; context.font = '12px sans-serif';
-            context.fillText('Captured ' + metadata.capturedAt, 16, 44);
-            const course = String(metadata.course).match(/^TEE ?1 (ROSA|AMARILLO|VERDE)$/i);
-            const date = String(metadata.date).match(/^(\\d{4})(\\d{2})(\\d{2})$/);
-            function field(label, value, left, top, fieldWidth, dropdown = true) {
-                context.fillStyle = '#555555'; context.font = '12px sans-serif';
-                context.fillText(label, left, top);
-                context.fillStyle = '#fafafa'; context.fillRect(left, top + 8, fieldWidth, 32);
-                context.strokeStyle = '#999999'; context.strokeRect(left + 0.5, top + 8.5, fieldWidth - 1, 31);
-                context.fillStyle = '#222222'; context.font = '16px sans-serif';
-                context.fillText(value, left + 8, top + 30);
-                if (dropdown) {
-                    context.beginPath(); context.moveTo(left + fieldWidth - 22, top + 21);
-                    context.lineTo(left + fieldWidth - 17, top + 26); context.lineTo(left + fieldWidth - 12, top + 21);
-                    context.stroke();
-                }
+            dropdown.size = Math.max(2, dropdown.options.length);
+            dropdown.style.setProperty('height', 'auto', 'important');
+            dropdown.style.setProperty('max-height', 'none', 'important');
+            if (dropdown.scrollHeight > dropdown.clientHeight) dropdown.style.setProperty('height', (dropdown.scrollHeight + 4) + 'px', 'important');
+            dropdown.scrollTop = 0;
+            const bounds = panel.getBoundingClientRect();
+            const times = dropdown.getBoundingClientRect();
+            const clip = {x:bounds.left + scrollX, y:bounds.top + scrollY, width:Math.ceil(bounds.width),
+                height:Math.ceil(Math.max(bounds.bottom, times.bottom) - bounds.top), scale:1};
+            if (clip.x < 0 || clip.y < 0 || clip.width <= 0 || clip.height <= 0
+                || clip.width * clip.height * devicePixelRatio ** 2 > 20000000) return null;
+            return {clip, optionCount:dropdown.options.length};
+            """;
+    private static final String RESTORE_REAL_TEE_TIME_SCREENSHOT = """
+            const state = window.__pratRealScreenshot;
+            if (!state) return;
+            for (const item of state.options) {
+                item.option.textContent = item.text;
+                if (item.label === null) item.option.removeAttribute('label'); else item.option.setAttribute('label', item.label);
             }
-            field('Fecha de juego', date ? date[3] + '/' + date[2] + '/' + date[1] : '[not recorded]', 16, 70, 388, false);
-            field('Recorrido', course ? 'TEE 1 ' + course[1].toUpperCase() : '[not recorded]', 16, 130, 388);
-            field('Número de hoyos', [9, 18].includes(metadata.holes) ? String(metadata.holes) : '[not recorded]', 16, 190, 180);
-            field('Jugadores', [1, 2, 3, 4].includes(metadata.players) ? String(metadata.players) : '[not recorded]', 220, 190, 184);
-            context.fillStyle = '#555555'; context.font = '12px sans-serif';
-            context.fillText('Hora de juego', 16, 254);
-            context.fillStyle = '#fafafa'; context.fillRect(16, 264, width - 32, height - 280);
-            context.strokeStyle = '#999999'; context.strokeRect(16.5, 264.5, width - 33, height - 281);
-            context.font = '16px sans-serif';
-            rows.forEach((row, index) => {
-                const top = 268 + index * 24;
-                if (row.selected) { context.fillStyle = '#e5f0ff'; context.fillRect(18, top - 2, width - 36, 24); }
-                context.fillStyle = row.disabled ? '#777777' : '#222222';
-                context.fillText(row.label, 24, top + 16);
-            });
-            return {png: canvas.toDataURL('image/png').split(',')[1], optionCount: rows.length};
+            if (state.size === null) state.dropdown.removeAttribute('size'); else state.dropdown.setAttribute('size', state.size);
+            for (const item of state.styles) {
+                item.element.style.cssText = item.style || '';
+                if (item.style === null) item.element.removeAttribute('style'); else item.element.setAttribute('style', item.style);
+            }
+            state.dropdown.scrollTop = state.scrollTop;
+            delete window.__pratRealScreenshot;
             """;
     private static final String BASE_URL = "https://members.teeone.golf/prat/reservas/inscripcion/";
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(15);
@@ -176,7 +173,8 @@ public class TeeOneAutomation {
     private Duration diagnosticObservationTimeout = Duration.ofSeconds(10);
     private Path teeTimeCaptureDirectory = Path.of("logs", "availability");
     private final Set<String> capturedTeeTimeScreenshots = new HashSet<>();
-    private record TeeTimeEvidence(String course, String date, int players, int holes, String phase, String capturedAt, String html) {}
+    private record RealTeeTimeScreenshot(byte[] png, int optionCount, int width, int height) {}
+    private record TeeTimeEvidence(String course, String date, int players, int holes, String phase, String capturedAt, String html, RealTeeTimeScreenshot screenshot) {}
     private final List<TeeTimeEvidence> pendingTeeTimeEvidence = new ArrayList<>();
     private final List<Map<String, Object>> savedTeeTimeImages = new ArrayList<>();
     private final Map<String, String> observedSocioNames = new LinkedHashMap<>();
@@ -628,10 +626,42 @@ public class TeeOneAutomation {
             Matcher date = Pattern.compile("/inscripcion/(\\d{8})(?:[/?#]|$)").matcher(url == null ? "" : url);
             if (date.find()) playDate = date.group(1);
             String html = dropdown.getDomProperty("outerHTML");
-            if (html != null) pendingTeeTimeEvidence.add(new TeeTimeEvidence(selectedRecorrido, playDate, players, selectedHoles, phase,
-                    ZonedDateTime.now(ZoneId.of("Europe/Madrid")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME), html));
+                String capturedAt = ZonedDateTime.now(ZoneId.of("Europe/Madrid")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+                boolean settled = List.of("initial-read", "initial-empty", "delayed-read-only").contains(phase);
+                    boolean duplicate = capturedTeeTimeScreenshots.contains(selectedRecorrido + "|" + selectedHoles + "|"
+                        + ("delayed-read-only".equals(phase) ? "delayed" : "initial")) || pendingTeeTimeEvidence.stream().anyMatch(evidence -> evidence.screenshot() != null
+                    && java.util.Objects.equals(evidence.course(), selectedRecorrido) && evidence.holes() == selectedHoles
+                    && "delayed-read-only".equals(evidence.phase()) == "delayed-read-only".equals(phase));
+                RealTeeTimeScreenshot screenshot = settled && !duplicate ? captureRealTeeTimeScreenshot(dropdown) : null;
+                if (html != null) pendingTeeTimeEvidence.add(new TeeTimeEvidence(selectedRecorrido, playDate, players, selectedHoles, phase,
+                    capturedAt, html, screenshot));
         } catch (RuntimeException exception) {
             log.warn("Raw tee-time HTML unavailable: phase={} course={}; original outcome retained", phase, selectedRecorrido);
+        }
+    }
+
+    private RealTeeTimeScreenshot captureRealTeeTimeScreenshot(WebElement dropdown) {
+        if (!(driver instanceof org.openqa.selenium.chromium.HasCdp chrome)) return null;
+        try {
+            Object prepared = ((JavascriptExecutor) driver).executeScript(PREPARE_REAL_TEE_TIME_SCREENSHOT, dropdown);
+            if (!(prepared instanceof Map<?, ?> state) || !(state.get("clip") instanceof Map<?, ?> clip)
+                    || !(state.get("optionCount") instanceof Number count)) return null;
+            Map<String, Object> result = chrome.executeCdpCommand("Page.captureScreenshot",
+                    Map.of("format", "png", "captureBeyondViewport", true, "clip", clip));
+            if (!(result.get("data") instanceof String data)) return null;
+            byte[] png = Base64.getDecoder().decode(data);
+            if (png.length < 24 || png.length > 20 * 1024 * 1024) return null;
+            java.nio.ByteBuffer header = java.nio.ByteBuffer.wrap(png);
+            return new RealTeeTimeScreenshot(png, count.intValue(), header.getInt(16), header.getInt(20));
+        } catch (RuntimeException exception) {
+            log.warn("Real tee-time screenshot unavailable; original outcome retained");
+            return null;
+        } finally {
+            try {
+                ((JavascriptExecutor) driver).executeScript(RESTORE_REAL_TEE_TIME_SCREENSHOT);
+            } catch (RuntimeException exception) {
+                log.warn("Could not restore tee-time screenshot presentation");
+            }
         }
     }
 
@@ -653,7 +683,7 @@ public class TeeOneAutomation {
                 String attempt = System.getenv("GITHUB_RUN_ATTEMPT");
                 Map<String, Object> manifest = new LinkedHashMap<>();
                 manifest.put("schemaVersion", 1);
-                manifest.put("rendering", "sanitized-dropdown-v1");
+                manifest.put("rendering", "redacted-real-form-v1");
                 manifest.put("executionId", run == null ? null : run + "-" + (attempt == null ? "1" : attempt));
                 manifest.put("images", savedTeeTimeImages);
                 Files.writeString(teeTimeCaptureDirectory.resolve("tee-time-images.json"),
@@ -667,20 +697,9 @@ public class TeeOneAutomation {
     private void saveTeeTimeScreenshots(TeeTimeEvidence evidence) {
         String stage = "delayed-read-only".equals(evidence.phase()) ? "delayed" : "initial";
         String key = evidence.course() + "|" + evidence.holes() + "|" + stage;
-        if (driver == null || capturedTeeTimeScreenshots.contains(key)) return;
-        byte[] screenshot;
-        int optionCount;
-        try {
-            Object rendered = ((JavascriptExecutor) driver).executeScript(RENDER_TEE_TIME_SCREENSHOT, evidence.html(),
-                    Map.of("course", String.valueOf(evidence.course()), "date", evidence.date(), "players", evidence.players(), "holes", evidence.holes(), "capturedAt", evidence.capturedAt()));
-            if (!(rendered instanceof Map<?, ?> state) || !(state.get("png") instanceof String png)
-                    || !(state.get("optionCount") instanceof Number count) || png.isEmpty()) return;
-            screenshot = Base64.getDecoder().decode(png);
-            optionCount = count.intValue();
-        } catch (RuntimeException exception) {
-            log.warn("Deferred tee-time screenshot unavailable for {}; original outcome retained", evidence.course());
-            return;
-        }
+        if (evidence.screenshot() == null || capturedTeeTimeScreenshots.contains(key)) return;
+        byte[] screenshot = evidence.screenshot().png();
+        int optionCount = evidence.screenshot().optionCount();
         String course = "unknown";
         if (evidence.course() != null) {
             Matcher color = Pattern.compile("\\b(ROSA|AMARILLO|VERDE)\\b").matcher(evidence.course());
@@ -690,9 +709,10 @@ public class TeeOneAutomation {
             Files.createDirectories(teeTimeCaptureDirectory);
             String file = evidence.date() + "-" + course + "-p" + evidence.players() + (evidence.holes() == 9 ? "-h9" : "") + "-" + stage + ".png";
             Files.write(teeTimeCaptureDirectory.resolve(file), screenshot);
-            savedTeeTimeImages.add(Map.of("file", file, "course", String.valueOf(evidence.course()),
-                    "playDate", evidence.date(), "players", evidence.players(), "capturedAt", evidence.capturedAt(),
-                    "stage", stage, "phase", evidence.phase(), "holes", evidence.holes(), "optionCount", optionCount));
+                savedTeeTimeImages.add(Map.ofEntries(Map.entry("file", file), Map.entry("course", String.valueOf(evidence.course())),
+                    Map.entry("playDate", evidence.date()), Map.entry("players", evidence.players()), Map.entry("capturedAt", evidence.capturedAt()),
+                    Map.entry("stage", stage), Map.entry("phase", evidence.phase()), Map.entry("holes", evidence.holes()), Map.entry("optionCount", optionCount),
+                    Map.entry("width", evidence.screenshot().width()), Map.entry("height", evidence.screenshot().height())));
             log.info("Tee-time screenshot: phase={} course={} players={} full-page={}",
                     evidence.phase(), evidence.course(), evidence.players(), file);
             capturedTeeTimeScreenshots.add(key);

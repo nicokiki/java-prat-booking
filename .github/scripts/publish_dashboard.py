@@ -57,11 +57,25 @@ def clean_screenshots(images, report):
         clean.append({key: image[key] for key in
                       ("path", "course", "stage", "playDate", "capturedAt", "players", "optionCount")})
         clean[-1]["holes"] = holes
+        if image.get("rendering") == "redacted-real-form-v1":
+            dimensions = (image.get("width"), image.get("height"))
+            validate_real_dimensions(dimensions)
+            clean[-1].update(rendering="redacted-real-form-v1", width=dimensions[0], height=dimensions[1])
+        elif image.get("rendering") not in {None, "sanitized-dropdown-v1"}:
+            raise ValueError("Invalid screenshot rendering")
         seen.add((course, holes, stage))
     return clean
 
 
-def public_png(path, option_count):
+def validate_real_dimensions(dimensions):
+    width, height = dimensions
+    if type(width) is not int or type(height) is not int or not 1 <= width <= 4096 or not 1 <= height <= 30000 or width * height > 20000000:
+        raise ValueError("Invalid real screenshot dimensions")
+
+
+def public_png(path, option_count, real_size=None):
+    if real_size is not None:
+        validate_real_dimensions(real_size)
     if path.is_symlink() or path.stat().st_size > 20 * 1024 * 1024:
         raise ValueError("Unsafe or oversized PNG")
     data = path.read_bytes()
@@ -84,7 +98,8 @@ def public_png(path, option_count):
             if kind != b"IHDR" or size != 13:
                 raise ValueError("Invalid PNG header")
             width, height, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", payload)
-            if width != 840 or height not in {max(140, 96 + option_count * 24) * 2, (300 + option_count * 24) * 2} or depth != 8 or color not in {2, 6} or any((compression, filtering, interlace)):
+            valid_size = (width, height) == real_size if real_size is not None else width == 840 and height in {max(140, 96 + option_count * 24) * 2, (300 + option_count * 24) * 2}
+            if not valid_size or depth != 8 or color not in {2, 6} or any((compression, filtering, interlace)):
                 raise ValueError("PNG does not match the full-page rendering")
         if kind in {b"IHDR", b"IDAT", b"IEND"}:
             chunks.append(data[offset:end])
@@ -108,7 +123,7 @@ def load_screenshots(directory, report):
     if directory.is_symlink() or manifest_path.is_symlink() or manifest_path.stat().st_size > 65536:
         raise ValueError("Unsafe screenshot manifest")
     manifest = json.loads(manifest_path.read_text())
-    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1 or manifest.get("rendering") != "sanitized-dropdown-v1" or manifest.get("executionId") != report["executionId"]:
+    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1 or manifest.get("rendering") not in {"sanitized-dropdown-v1", "redacted-real-form-v1"} or manifest.get("executionId") != report["executionId"]:
         raise ValueError("Screenshot manifest provenance does not match execution")
     if not isinstance(manifest.get("images"), list) or len(manifest["images"]) > 12:
         raise ValueError("Invalid screenshot manifest")
@@ -131,9 +146,13 @@ def load_screenshots(directory, report):
             raise ValueError("Unsafe screenshot file or mismatched play date")
         image = {key: entry.get(key) for key in ("course", "capturedAt", "players", "optionCount")}
         image.update(stage=stage, holes=holes, playDate=report["playDate"], path="data/executions/" + report["executionId"] + "/screenshots/" + COURSES[entry["course"]] + ("-9" if holes == 9 else "") + "-" + stage + ".png")
+        real_size = None
+        if manifest["rendering"] == "redacted-real-form-v1":
+            real_size = (entry.get("width"), entry.get("height"))
+            image.update(rendering="redacted-real-form-v1", width=real_size[0], height=real_size[1])
         images.append(image)
         clean_screenshots(images, report)
-        files[image["path"]] = public_png(directory / expected, image["optionCount"])
+        files[image["path"]] = public_png(directory / expected, image["optionCount"], real_size)
     return images, files
 
 

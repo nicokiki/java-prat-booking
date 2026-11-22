@@ -147,6 +147,23 @@ class PublisherTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publisher.load_screenshots(directory, self.report())
 
+    def test_real_form_png_requires_matching_bounded_dimensions_and_keeps_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = self.screenshot_fixture(directory, height=900)
+            manifest["rendering"] = "redacted-real-form-v1"
+            manifest["images"][0].update(width=840, height=900)
+            (directory / "tee-time-images.json").write_text(json.dumps(manifest))
+            images, files = publisher.load_screenshots(directory, self.report())
+            self.assertEqual("redacted-real-form-v1", images[0]["rendering"])
+            self.assertEqual(images, publisher.clean_screenshots(images, self.report()))
+            self.assertNotIn(b"NEVER-PUBLISH", next(iter(files.values())))
+            for height in [899, 30001, None]:
+                manifest["images"][0]["height"] = height
+                (directory / "tee-time-images.json").write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    publisher.load_screenshots(directory, self.report())
+
     def test_image_dry_run_writes_nothing_and_bad_images_do_not_block_report(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

@@ -198,9 +198,10 @@ the raw counts remain complete. Visibility is recorded separately as `displayed`
 ### Verbatim HTML and course screenshots
 
 After the player filter settles and the time dropdown is inspected, the actual
-rendered `HoraJuego.outerHTML` and capture metadata are copied into memory only.
-No raw-HTML log writes, PNG capture, screenshot rendering or new capture-file writes
-run in the selection/block/confirmation path; existing operational logs are unchanged.
+rendered `HoraJuego.outerHTML` and capture metadata are copied into memory.
+Real PNG pixels are also captured in memory while each course is displayed.
+No raw-HTML log writes or new capture-file writes run in the
+selection/block/confirmation path; existing operational logs are unchanged.
 `Main` saves the queued evidence
 after the normal booking or inspection flow, result saving and email handling,
 just before closing the browser, including failure and no-email paths.
@@ -215,21 +216,22 @@ attributes and any member labels. It is not full-page source or an API body.
 One initial full-page PNG per observed course/hole variant is saved under `logs/availability/`, with
 the play date, course and player count in its filename. Nine-hole filenames add
 `-h9`; eighteen-hole names stay unchanged. There can also be one delayed-recheck
-PNG per variant. Readiness and filter failures are queued too.
-After the flow, an off-screen canvas renders the selected play date, Recorrido,
-Numero de hoyos and Jugadores controls above every saved tee-time option in one
-tall PNG, without the viewport clipping native-select screenshots can cause.
-The controls are sanitized reconstructions from the capture's selected filter
-metadata, not an unredacted browser screenshot. Existing historical PNGs remain unchanged.
-Only allowlisted filter values, time/capacity labels and selected/disabled states are drawn; member-name
-suffixes are removed and other non-time labels are redacted. Original event
-handlers and arbitrary attributes are not executed. More than 500 options
-skip PNG creation rather than silently truncating the image. PNGs represent
-the saved HTML snapshot, not a live screenshot taken during selection. Live
-reservation controls are never expanded or changed, and courses are not revisited.
-Diagnostic capture failures do not replace the booking outcome. Only the small
-DOM/metadata snapshot read remains in the normal path; browser rendering and
-file work happen afterward, with no added availability requests or reservation retries.
+PNG per variant. Readiness and filter failures retain raw diagnostic evidence only.
+Chrome captures the actual reservation form, including Fecha de juego, Recorrido,
+Numero de hoyos, Jugadores and every tee-time option. The existing native time
+select is temporarily expanded; Chrome's capture-beyond-viewport API prevents
+clipping. No controls are reconstructed and courses are not revisited.
+Member-name suffixes and non-time labels are temporarily redacted. The account
+header is outside the crop, and forms with visible text/password inputs are skipped.
+Styles, original option text/labels, size and scroll position are restored in a
+finally block; no selection or change/click events are issued. More than 500 options
+or excessive pixel area skip capture rather than publish a partial image.
+Capture failures do not replace the booking outcome. PNG bytes stay in memory
+until the existing post-flow save step. Historical reconstructed images remain unchanged.
+
+The offline Chrome pixel regression checks the last of 152 native options beyond
+the viewport and verifies restored CSS, selection and labels with no change events:
+`mvn -Dbooking.realScreenshotTest=true -Dtest=TeeOneAutomationTest#realChromeScreenshotContainsLastRowBeyondViewportAndRestoresForm test`.
 
 Raw HTML may contain private member labels and is **never** sent to the dashboard,
 public report JSON, CSV or email. A separate `tee-time-images.json` manifest identifies
@@ -237,7 +239,7 @@ the sanitized PNGs by execution, course, holes, stage and original capture time.
 The publisher copies only these validated PNGs into
 `data/executions/EXECUTION_ID/screenshots/` in the dashboard repository and adds
 allowlisted `screenshots` references to that execution. Only settled Initial/Recheck
-captures are published; filter/readiness-failure PNGs remain in the diagnostic bundle.
+captures are published; filter/readiness failures do not produce public PNGs.
 The workflow's live-run marker also excludes build-time fixture images. PNG ancillary metadata is
 stripped before publication. Missing or invalid images do not block the saved
 booking result. Older executions without PNGs remain unchanged.

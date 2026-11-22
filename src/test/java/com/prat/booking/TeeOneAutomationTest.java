@@ -36,7 +36,7 @@ public class TeeOneAutomationTest {
     @Before
     public void setUp() throws Exception {
         automation = new TeeOneAutomation();
-        driver = mock(WebDriver.class, withSettings().extraInterfaces(JavascriptExecutor.class, TakesScreenshot.class));
+        driver = mock(WebDriver.class, withSettings().extraInterfaces(JavascriptExecutor.class, TakesScreenshot.class, org.openqa.selenium.chromium.HasCdp.class));
         when(driver.findElement(any(By.class))).thenThrow(new NoSuchElementException("Missing fixture element"));
         when(((JavascriptExecutor) driver).executeScript(anyString())).thenReturn(true);
         when(((JavascriptExecutor) driver).executeScript(availabilityReadScript())).thenReturn(java.util.Map.of());
@@ -169,12 +169,15 @@ public class TeeOneAutomationTest {
         assertFalse(source.contains(".click("));
         java.nio.file.Files.writeString(java.nio.file.Path.of("target", "availability-observer-fixture.js"), source);
         java.nio.file.Files.writeString(java.nio.file.Path.of("target", "availability-read-fixture.js"), availabilityReadScript());
-        Field renderer = TeeOneAutomation.class.getDeclaredField("RENDER_TEE_TIME_SCREENSHOT");
+        Field renderer = TeeOneAutomation.class.getDeclaredField("PREPARE_REAL_TEE_TIME_SCREENSHOT");
         renderer.setAccessible(true);
         String rendering = (String) renderer.get(null);
         assertFalse(rendering.contains("document.body"));
         assertFalse(rendering.contains("fetch("));
-        java.nio.file.Files.writeString(java.nio.file.Path.of("target", "tee-time-render-fixture.js"), rendering);
+        Field restore = TeeOneAutomation.class.getDeclaredField("RESTORE_REAL_TEE_TIME_SCREENSHOT");
+        restore.setAccessible(true);
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target", "tee-time-render-fixture.js"),
+            com.google.api.client.json.gson.GsonFactory.getDefaultInstance().toString(java.util.Map.of("prepare", rendering, "restore", restore.get(null))));
     }
 
     private String availabilityReadScript() throws Exception {
@@ -260,8 +263,7 @@ public class TeeOneAutomationTest {
         WebElement panel = mock(WebElement.class);
         var bytes = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
-        doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 1))
-            .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
+        realScreenshotFixture(source, bytes.toByteArray(), 1);
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "deferred-tee-time-");
         Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
         captureDirectory.setAccessible(true);
@@ -281,7 +283,7 @@ public class TeeOneAutomationTest {
             assertTrue(messages.list.get(0).getFormattedMessage().endsWith("html=" + html));
             assertTrue(messages.list.get(0).getFormattedMessage().contains("capturedAt="));
             try (var files = java.nio.file.Files.list(directory)) { assertEquals(2, files.count()); }
-            verify((JavascriptExecutor) driver).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
+            verify((org.openqa.selenium.chromium.HasCdp) driver).executeCdpCommand(eq("Page.captureScreenshot"), argThat(arguments -> Boolean.TRUE.equals(arguments.get("captureBeyondViewport"))));
             verify(source, never()).getScreenshotAs(any());
             verify((JavascriptExecutor) driver, never()).executeScript(contains("arguments[0].remove()"), any());
             automation.saveTeeTimeEvidence();
@@ -301,8 +303,7 @@ public class TeeOneAutomationTest {
         WebElement panel = mock(WebElement.class);
         var bytes = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
-        doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 1))
-            .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
+        realScreenshotFixture(select, bytes.toByteArray(), 1);
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-capture-");
         Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
         captureDirectory.setAccessible(true);
@@ -326,7 +327,7 @@ public class TeeOneAutomationTest {
             }
             invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-empty");
             automation.saveTeeTimeEvidence();
-            verify((JavascriptExecutor) driver, times(1)).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
+            verify((org.openqa.selenium.chromium.HasCdp) driver, times(1)).executeCdpCommand(eq("Page.captureScreenshot"), anyMap());
             Field course = TeeOneAutomation.class.getDeclaredField("selectedRecorrido");
             course.setAccessible(true);
             for (String name : List.of("TEE 1 ROSA", "TEE 1 AMARILLO", "TEE 1 VERDE")) {
@@ -364,8 +365,7 @@ public class TeeOneAutomationTest {
         WebElement panel = mock(WebElement.class);
         var bytes = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(840, 3096, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", bytes);
-        doReturn(java.util.Map.of("png", java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()), "optionCount", 52))
-            .when((JavascriptExecutor) driver).executeScript(contains("createElement('template')"), eq(html), anyMap());
+        realScreenshotFixture(select, bytes.toByteArray(), 52);
         var directory = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("target"), "tee-time-parts-");
         Field captureDirectory = TeeOneAutomation.class.getDeclaredField("teeTimeCaptureDirectory");
         captureDirectory.setAccessible(true);
@@ -379,7 +379,7 @@ public class TeeOneAutomationTest {
             assertEquals(3096, javax.imageio.ImageIO.read(png.get(0).toFile()).getHeight());
         }
         String manifest = java.nio.file.Files.readString(directory.resolve("tee-time-images.json"));
-        assertTrue(manifest.contains("sanitized-dropdown-v1"));
+        assertTrue(manifest.contains("redacted-real-form-v1"));
         assertTrue(manifest.contains("\"optionCount\": 52"));
         assertFalse(manifest.contains("<select>"));
         Field holes = TeeOneAutomation.class.getDeclaredField("selectedHoles");
@@ -392,7 +392,7 @@ public class TeeOneAutomationTest {
         manifest = java.nio.file.Files.readString(directory.resolve("tee-time-images.json"));
         assertTrue(manifest.contains("\"holes\": 18"));
         assertTrue(manifest.contains("\"holes\": 9"));
-        verify((JavascriptExecutor) driver, times(2)).executeScript(contains("createElement('canvas')"), eq(html), anyMap());
+        verify((org.openqa.selenium.chromium.HasCdp) driver, times(2)).executeCdpCommand(eq("Page.captureScreenshot"), anyMap());
         verify((JavascriptExecutor) driver, never()).executeScript(contains("clientHeight"), any(), any());
         verify(select, never()).getScreenshotAs(any());
         verify(select, never()).click();
@@ -403,9 +403,11 @@ public class TeeOneAutomationTest {
         WebElement select = dropdown(option("", "-1"));
         String html = "<select id=\"HoraJuego\"><option value=\"-1\"></option></select>";
         when(select.getDomProperty("outerHTML")).thenReturn(html);
-        doThrow(new WebDriverException("Fixture screenshot failure")).when((JavascriptExecutor) driver)
-            .executeScript(contains("createElement('template')"), eq(html), anyMap());
-        invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "readiness-failure");
+        realScreenshotFixture(select, new byte[24], 1);
+        doThrow(new WebDriverException("Fixture screenshot failure")).when((org.openqa.selenium.chromium.HasCdp) driver)
+            .executeCdpCommand(eq("Page.captureScreenshot"), anyMap());
+        invoke("captureTeeTimeEvidence", new Class<?>[]{WebElement.class, int.class, String.class}, select, 2, "initial-read");
+        verify((JavascriptExecutor) driver).executeScript(contains("delete window.__pratRealScreenshot"));
         automation.saveTeeTimeEvidence();
         verify((JavascriptExecutor) driver, never()).executeScript(contains("arguments[0].remove()"), any());
         verify(select, never()).getScreenshotAs(any());
@@ -416,8 +418,75 @@ public class TeeOneAutomationTest {
         verify(select, never()).click();
     }
 
+        private void realScreenshotFixture(WebElement source, byte[] png, int count) {
+        doReturn(java.util.Map.of("optionCount", count, "clip", java.util.Map.of("x", 0, "y", 0, "width", 840, "height", 3096, "scale", 1)))
+            .when((JavascriptExecutor) driver).executeScript(contains("const dropdown = arguments[0]"), eq(source));
+        doReturn(java.util.Map.of("data", java.util.Base64.getEncoder().encodeToString(png)))
+            .when((org.openqa.selenium.chromium.HasCdp) driver).executeCdpCommand(eq("Page.captureScreenshot"), anyMap());
+        }
+
     @Test
-    public void logsRenderedDropdownHtmlWithoutReadingRawPageMarkup() throws Exception {
+    public void realChromeScreenshotContainsLastRowBeyondViewportAndRestoresForm() throws Exception {
+        org.junit.Assume.assumeTrue(Boolean.getBoolean("booking.realScreenshotTest"));
+        var options = new org.openqa.selenium.chrome.ChromeOptions();
+        options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--window-size=1000,800", "--force-device-scale-factor=1");
+        var chrome = new org.openqa.selenium.chrome.ChromeDriver(options);
+        try {
+            Field browser = TeeOneAutomation.class.getDeclaredField("driver");
+            browser.setAccessible(true);
+            browser.set(automation, chrome);
+            String html = "<style>.panel{width:704px;background:white}select{display:block;font:16px sans-serif;height:38px;width:500px}</style>"
+                    + "<div class='panel'><h3>Datos de la reserva</h3><div>Fecha de juego: 23/11/2026</div>"
+                    + "<label>Recorrido<select id='Recorrido'><option>TEE 1 ROSA</option></select></label>"
+                    + "<label>Numero de hoyos<select id='Hoyos'><option>18</option></select></label>"
+                    + "<label>Jugadores<select id='Plazas'><option>2</option></select></label>"
+                    + "<label>Hora de juego<select id='HoraJuego'><option value='-1' selected></option>"
+                    + "<option>08:00 (4) private-member</option>".repeat(150) + "<option>17:30 (2)</option></select></label></div>";
+            chrome.get("data:text/html;charset=utf-8," + java.net.URLEncoder.encode(html, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+            WebElement source = chrome.findElement(By.id("HoraJuego"));
+            String stateScript = "return JSON.stringify({value:arguments[0].value,size:arguments[0].getAttribute('size'),style:arguments[0].style.cssText,text:arguments[0].textContent});";
+            String before = (String) chrome.executeScript(stateScript, source);
+            chrome.executeScript("window.captureChanges=0;arguments[0].addEventListener('change',()=>window.captureChanges++);", source);
+            Field prepare = TeeOneAutomation.class.getDeclaredField("PREPARE_REAL_TEE_TIME_SCREENSHOT");
+            prepare.setAccessible(true);
+            Field restore = TeeOneAutomation.class.getDeclaredField("RESTORE_REAL_TEE_TIME_SCREENSHOT");
+            restore.setAccessible(true);
+            java.util.Map<?, ?> last;
+            try {
+                assertNotNull(chrome.executeScript((String) prepare.get(null), source));
+                last = (java.util.Map<?, ?>) chrome.executeScript("const panel=arguments[0].closest('.panel').getBoundingClientRect();const last=arguments[0].options[arguments[0].options.length-1].getBoundingClientRect();return {left:last.left-panel.left,top:last.top-panel.top,width:last.width,height:last.height};", source);
+            } finally {
+                chrome.executeScript((String) restore.get(null));
+            }
+            Object capture = invoke("captureRealTeeTimeScreenshot", new Class<?>[]{WebElement.class}, source);
+            assertNotNull(capture);
+            var pngAccessor = capture.getClass().getDeclaredMethod("png");
+            pngAccessor.setAccessible(true);
+            byte[] png = (byte[]) pngAccessor.invoke(capture);
+            var image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+            assertTrue(image.getHeight() > 3000);
+            int left = ((Number) last.get("left")).intValue() + 8;
+            int top = ((Number) last.get("top")).intValue() + 2;
+            int rowHeight = ((Number) last.get("height")).intValue();
+            assertTrue(rowHeight > 4);
+            boolean ink = false;
+            for (int row = top; row < top + rowHeight - 4; row++) {
+                for (int column = left; column < left + 80; column++) {
+                    int pixel = image.getRGB(column, row);
+                    if ((pixel >> 16 & 255) < 150 && (pixel >> 8 & 255) < 150 && (pixel & 255) < 150) ink = true;
+                }
+            }
+            assertTrue("Last native option must contain visible text pixels", ink);
+            assertEquals(before, chrome.executeScript(stateScript, source));
+            assertEquals(0L, chrome.executeScript("return window.captureChanges;"));
+            java.nio.file.Files.write(java.nio.file.Path.of("target", "real-form-chrome-check.png"), png);
+        } finally {
+            chrome.quit();
+        }
+    }
+
+        @Test
+        public void logsRenderedDropdownHtmlWithoutReadingRawPageMarkup() throws Exception {
         WebElement placeholder = option("", "-1");
         WebElement time = option("08:25 (4)", "private-slot-value");
         when(time.getAttribute("textContent")).thenReturn("08:25 (4)");
